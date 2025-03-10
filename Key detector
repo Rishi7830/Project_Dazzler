@@ -1,0 +1,52 @@
+import librosa
+import numpy as np
+
+# Load the audio file
+audio_file_path = 'scom.mp3'
+y, sr = librosa.load(audio_file_path, sr=None)
+
+# Compute the Chroma Short-Time Fourier Transform (chroma_stft)
+chromagram = librosa.feature.chroma_stft(y=y, sr=sr)
+
+# Calculate the mean chroma feature across time
+mean_chroma = np.mean(chromagram, axis=1)
+
+# Define the mapping of chroma indices to note names
+notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+# Krumhansl-Schmuckler key profiles for major and minor keys
+major_profile = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
+minor_profile = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
+
+# Normalize the profiles
+major_profile = major_profile / np.sum(major_profile)
+minor_profile = minor_profile / np.sum(minor_profile)
+
+# Prepare to store the best correlation values and associated key/mode
+best_corr = -np.inf
+detected_key = None
+detected_mode = None
+
+# Iterate through each of the 12 possible tonics
+for i in range(12):
+    # Rotate the profiles so the candidate tonic aligns with the first element
+    major_rotated = np.roll(major_profile, i)
+    minor_rotated = np.roll(minor_profile, i)
+    
+    # Compute the similarity (dot product) between mean_chroma and each profile
+    corr_major = np.dot(mean_chroma, major_rotated)
+    corr_minor = np.dot(mean_chroma, minor_rotated)
+    
+    # Check if this major candidate is the best so far
+    if corr_major > best_corr:
+        best_corr = corr_major
+        detected_key = notes[i]
+        detected_mode = "Major"
+    
+    # Check if this minor candidate is the best so far
+    if corr_minor > best_corr:
+        best_corr = corr_minor
+        detected_key = notes[i]
+        detected_mode = "Minor"
+
+print(f"Detected Key: {detected_key} {detected_mode}")
