@@ -1,3 +1,4 @@
+
 import librosa
 import librosa.display
 import numpy as np
@@ -131,19 +132,32 @@ def analyze_audio(audio_file_path, amplitude_threshold=0.40, duration=180):
     }
 
 if __name__ == "__main__":
-    # Change this to your audio file
-    audio_file = "scom.mp3"
+    parser = argparse.ArgumentParser(description='Play audio and synchronize LED flashes with bass onsets')
+    parser.add_argument('audio_file', type=str, help='Path to MP3/FLAC audio file')
+    parser.add_argument('arduino_port', type=str, help='Serial port for Arduino communication (e.g., COM3, /dev/ttyUSB0)')
+    parser.add_argument('--arduino-baud', type=int, default=9600,
+                        help='Baud rate for Arduino communication')
+    parser.add_argument('--threshold', type=float, default=0.40,
+                        help='Amplitude threshold for bass detection (0.0-1.0)')
+    parser.add_argument('--cutoff-freq', type=int, default=200,
+                        help='Cutoff frequency for bass detection in Hz')
+    parser.add_argument('--duration', type=float, default=None,
+                        help='Duration in seconds to analyze (default: entire file)')
     
-    try:
-        # Analyze 3 minutes with amplitude threshold of 0.40
-        results = analyze_audio(audio_file, amplitude_threshold=0.40, duration=180)
-        
-        # Print onset times array
-        print("\nBass onset times (seconds):")
-        print(results['onset_times'])
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"\nError analyzing audio: {e}")
-        print("Make sure you have installed all dependencies: librosa, matplotlib, numpy, scipy")
+    args = parser.parse_args()
+    
+    # Step 1: Analyze the audio file to find bass onsets
+    bass_onsets, sample_rate = analyze_bass_onsets(
+        audio_file=args.audio_file,
+        amplitude_threshold=args.threshold,
+        cutoff_freq=args.cutoff_freq,
+        duration=args.duration
+    )
+    
+    # Step 2: Play the audio and synchronize LED flashes
+    play_audio_and_sync_leds(
+        audio_file=args.audio_file,
+        arduino_port=args.arduino_port,
+        bass_onsets=bass_onsets,
+        arduino_baud=args.arduino_baud
+    )
