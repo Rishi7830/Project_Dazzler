@@ -1,57 +1,43 @@
-import librosa
+import librosa 
 import numpy as np
-import sounddevice as sd
-import time
 
-def analyze_audio(duration=5, sample_rate=44100):
-    """
-    Records audio from the microphone, analyzes it, and returns key, amplitude, octave, and tempo.
+def get_amplitude(mp3_file):
+    """Extracts and returns the amplitude of MP3 file."""
+    y, sr = librosa.load(mp3_file, sr=None)  # Loads the mp3 file
+    amplitude = librosa.feature.rms(y=y)
+    amplitude_db = librosa.amplitude_to_db(amplitude, ref=np.max)  # Converts to dB
+    return amplitude_db.mean()  # Return average amplitude
 
-    Args:
-        duration (int): Recording duration in seconds.
-        sample_rate (int): Sample rate of the audio.
-
-    Returns:
-        tuple: (key, amplitude, octave, tempo) or None if analysis fails.
-    """
+def analyze_audio(mp3_file):
+    """Analyzes key, octave, and tempo of MP3 file."""
     try:
-        print(f"Recording for {duration} seconds...")
-        audio_data = sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=1, dtype=np.float32)
-        sd.wait()  # Wait for recording to finish
-        audio_data = audio_data.flatten()  # Flatten to 1D array
+        y, sr = librosa.load(mp3_file, sr=None)  # Loads the MP3 file
+        
+        # Key
+        tonnetz = librosa.feature.tonnetz(y=y, sr=sr)
+        key = np.argmax(tonnetz.mean(axis=1))
 
-        # Key Estimation (using Tonnetz features)
-        chroma = librosa.feature.chroma_cqt(y=audio_data, sr=sample_rate)
-        tonnetz = librosa.feature.tonnetz(y=audio_data, sr=sample_rate)
-        key = np.argmax(tonnetz.mean(axis=1))  # Rough key estimation
+        # Octave
+        spectral_centroid = librosa.feature.spectral_centroid(y=y, sr=sr).mean()
+        octave = round(np.log2(spectral_centroid / 440) + 4) if spectral_centroid > 0 else 0
 
-        # Amplitude (RMS)
-        amplitude = librosa.feature.rms(y=audio_data)
-        amplitude_db = librosa.amplitude_to_db([amplitude], ref=np.max)  # Convert to dB
+        # Tempo
+        tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
 
-        # Octave (Rough estimate using spectral centroid)
-        spectral_centroid = librosa.feature.spectral_centroid(y=audio_data, sr=sample_rate)[0].mean()
-        if spectral_centroid > 0:
-            octave = round(np.log2(spectral_centroid / 440) + 4)  # Ensure no math errors
-        else:
-            octave = 0  # Default if centroid is too low
-
-        # Tempo (BPM)
-        tempo, beats = librosa.beat.beat_track(y=audio_data, sr=sample_rate)
-
-        return key, amplitude_db, octave, tempo, beats
-
+        return key, octave, tempo, beats
     except Exception as e:
-        print(f"Error during analysis: {e}")
+        print(f"Error: {e}")
         return None
 
 if __name__ == "__main__":
-    analysis_result = analyze_audio()
+    mp3_file = "your_audio.mp3"  # MP3 file path input :)
+    amplitude = get_amplitude(mp3_file)
+    analysis_result = analyze_audio(mp3_file)
 
     if analysis_result:
-        key, amplitude_db, octave, tempo, beats = analysis_result
+        key, octave, tempo, beats = analysis_result
         print(f"Key Estimate: {key}")
-        print(f"Amplitude (dB):", amplitude_db)
+        print(f"Amplitude (dB): {amplitude:.2f}")
         print(f"Octave: {octave}")
-        print(f"Tempo (BPM): {float(tempo):.2f}")
+        print(f"Tempo (BPM): {tempo:.2f}")
         print(f"Beat Frames:", beats)
