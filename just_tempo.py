@@ -5,4 +5,6 @@ import numpy as np
 audio_file_path = 'scom.mp3'
 y, sr = librosa.load(audio_file_path, sr=None)
 
+tempo,_ = librosa.beat.beat_track(y=y, sr=sr)
 
+print (tempo)
