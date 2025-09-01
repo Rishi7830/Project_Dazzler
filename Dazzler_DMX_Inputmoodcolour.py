@@ -1,4 +1,4 @@
-from pydmxcontroller import PyDMXController
+import PyDMXControl.controllers as controllers
 import time
 
 # --- Part 1: DMX Setup ---
@@ -7,12 +7,7 @@ import time
 # On Windows: 'COMx' (e.g., 'COM3')
 # On macOS: '/dev/cu.usbserial-Axxxxx'
 # On Linux: '/dev/ttyUSBx'
-try:
-    dmx = PyDMXController(port='/dev/ttyUSB0')#Need to add computer port
-except Exception as e:
-    print(f"Error initializing DMX controller: {e}")
-    print("Please check the port name and ensure the device is connected.")
-    exit()
+dmx = controllers.uDMXController('/dev/tty.usbserial-A50285BI')
 
 # Set the starting DMX channel for your light fixture.
 # This assumes an RGB light where the channels are consecutive.
@@ -20,7 +15,7 @@ except Exception as e:
 start_channel = 1
 
 # --- Part 2: Mood-to-Color Mapping ---
-# A dictionary mapping moods to their corresponding RGB color values (0-255).
+# A dictionary mapping moods to their corresponding RGB color values (0-255).s
 mood_colors = {
     'calm':      (0, 0, 255),    # Deep Blue
     'energetic': (255, 255, 0),  # Yellow
