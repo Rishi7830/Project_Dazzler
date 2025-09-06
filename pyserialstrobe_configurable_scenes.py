@@ -83,11 +83,11 @@ if __name__ == "__main__":
     import time
 
     colors = {
-        "red": (255, 0, 0),
-        "green": (0, 255, 0),
-        "blue": (0, 0, 255),
-        "white": (0, 0, 255),
-        "yellow": (255, 255, 0),
+        "red": (255, 0, 0, 0),
+        "green": (0, 255, 0, 0),
+        "blue": (0, 0, 255, 0),
+        "white": (0, 0, 0, 255),
+        "yellow": (255, 255, 0, 0),
         "cyan": (0, 255, 255, 0),
         "magenta": (255, 0, 255, 0),
         "purple": (128, 0, 128, 0)
@@ -119,22 +119,27 @@ if __name__ == "__main__":
                 break
 
             if user_input.startswith("scene "):
-                # Define a scene
-                scene_data = user_input[6:].strip()
-                steps = scene_data.split(";")
-                scene_name = "scene"  # You can extend this to allow naming
-                scenes[scene_name] = []
+                # Allow named scenes: "scene <name> <steps...>"
+                parts = user_input.split(maxsplit=2)
+                if len(parts) < 3:
+                    print("Usage: scene <name> <color steps>")
+                    print("Example: scene party red 5; blue s 0.3 8; green 4")
+                    continue
+
+                scene_name = parts[1]
+                steps = parts[2].split(";")
+                scenes[scene_name] = []  # store this scene under its name
 
                 for step in steps:
-                    parts = step.strip().split()
-                    if not parts:
+                    step_parts = step.strip().split()
+                    if not step_parts:
                         continue
 
-                    color = parts[0]
-                    strobe = len(parts) > 1 and parts[1] == 's'
-                    interval = float(parts[2]) if strobe and len(parts) > 2 else 0.5
-                    duration = float(parts[3]) if strobe and len(parts) > 3 else (
-                        float(parts[2]) if not strobe and len(parts) > 2 else 5.0
+                    color = step_parts[0]
+                    strobe = len(step_parts) > 1 and step_parts[1] == 's'
+                    interval = float(step_parts[2]) if strobe and len(step_parts) > 2 else 0.5
+                    duration = float(step_parts[3]) if strobe and len(step_parts) > 3 else (
+                        float(step_parts[1]) if not strobe and len(step_parts) > 1 else 5.0
                     )
 
                     if color in colors:
