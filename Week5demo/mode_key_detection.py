@@ -1,60 +1,66 @@
 """
-Tempo Detection Module
-Uses Essentia for BPM/tempo extraction from audio chunks
+Mode and Key Detection Module
+Uses Essentia for musical key and mode extraction from audio chunks
 """
 
 import essentia.standard as es
 import numpy as np
 
-def detect_tempo(audio_data, sample_rate):
+def detect_mode_key(audio_data, sample_rate):
     """
-    Extract tempo/BPM from audio chunk using Essentia
+    Extract musical mode and key from audio chunk using Essentia
     
     Args:
         audio_data (np.array): Audio samples (mono)
         sample_rate (int): Sample rate in Hz
         
     Returns:
-        float: Detected tempo in BPM
+        tuple: (mode, key) e.g., ("major", "C")
     """
     
-    # Initialize Essentia tempo extractor
-    tempo_extractor = es.RhythmExtractor2013(method="multifeature")
+    # Initialize Essentia key extractor
+    key_extractor = es.KeyExtractor()
     
     try:
-        # Extract tempo using Essentia
-        bpm, beats, beats_confidence, _, _ = tempo_extractor(audio_data.astype(np.float32))
-        tempo = float(bpm)
+        # Extract key and scale using Essentia
+        key, scale, strength = key_extractor(audio_data.astype(np.float32))
         
-        # Validate tempo range (typical music: 60-200 BPM)
-        if tempo < 60:
-            tempo = tempo * 2  # Double if too slow
-        elif tempo > 200:
-            tempo = tempo / 2  # Halve if too fast
+        # Clean up the results
+        mode = scale.lower() if scale else "major"  # Default to major
+        detected_key = key if key else "C"  # Default to C
+        
+        # Map common scale names to mode
+        if "minor" in mode:
+            mode = "minor"
+        else:
+            mode = "major"
             
     except Exception as e:
-        print(f"Tempo detection error: {e}")
-        # Fallback: return default tempo
-        tempo = 120.0
+        print(f"Mode/Key detection error: {e}")
+        # Fallback to defaults
+        mode = "major"
+        detected_key = "C"
     
-    return tempo
+    return mode, detected_key
 
-def detect_tempo_advanced(audio_data, sample_rate, window_size=2048, hop_size=512):
+def detect_mode_key_windowed(audio_data, sample_rate, window_size=8192, hop_size=4096):
     """
-    Advanced tempo detection with windowed analysis
+    Advanced mode/key detection with windowed analysis
+    Uses larger windows as key detection needs more context
     
     Args:
         audio_data (np.array): Audio samples (mono)
         sample_rate (int): Sample rate in Hz
-        window_size (int): Analysis window size
+        window_size (int): Analysis window size (larger for key detection)
         hop_size (int): Hop between windows
         
     Returns:
-        float: Average detected tempo across windows
+        tuple: (mode, key) - most common detected across windows
     """
     
-    tempo_extractor = es.RhythmExtractor2013(method="multifeature")
-    tempo_values = []
+    key_extractor = es.KeyExtractor()
+    key_detections = []
+    mode_detections = []
     
     # Process audio in windows
     num_windows = (len(audio_data) - window_size) // hop_size + 1
@@ -65,20 +71,111 @@ def detect_tempo_advanced(audio_data, sample_rate, window_size=2048, hop_size=51
         window = audio_data[start:end].astype(np.float32)
         
         if len(window) < window_size:
-            continue
-            
+            # Pad window if too short
+            window = np.pad(window, (0, window_size - len(window)), mode='constant')
+        
         try:
-            bpm, _, _, _, _ = tempo_extractor(window)
-            if 60 <= bpm <= 200:  # Valid tempo range
-                tempo_values.append(float(bpm))
+            key, scale, strength = key_extractor(window)
+            
+            if strength > 0.5:  # Only accept confident detections
+                key_detections.append(key)
+                if "minor" in scale.lower():
+                    mode_detections.append("minor")
+                else:
+                    mode_detections.append("major")
+                    
         except:
             continue
     
-    # Return median tempo if windows detected, else fallback
-    if tempo_values:
-        return float(np.median(tempo_values))
+    # Find most common key and mode
+    if key_detections and mode_detections:
+        # Most common key
+        unique_keys, counts = np.unique(key_detections, return_counts=True)
+        most_common_key = unique_keys[np.argmax(counts)]
+        
+        # Most common mode
+        unique_modes, counts = np.unique(mode_detections, return_counts=True)
+        most_common_mode = unique_modes[np.argmax(counts)]
+        
+        return most_common_mode, most_common_key
     else:
-        return 120.0
+        return "major", "C"  # Fallback
+
+def get_key_number(key_name):
+    """
+    Convert key name to number for easier processing
+    
+    Args:
+        key_name (str): Key name like "C", "F#", etc.
+        
+    Returns:
+        int: Key number (0-11)
+    """
+    
+    key_map = {
+        "C": 0, "C#": 1, "Db": 1, "D": 2, "D#": 3, "Eb": 3,
+        "E": 4, "F": 5, "F#": 6, "Gb": 6, "G": 7, "G#": 8,
+        "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11
+    }
+    
+    return key_map.get(key_name, 0)  # Default to C (0)
+
+def get_mode_brightness(mode):
+    """
+    Get relative brightness/darkness of mode for color mapping
+    
+    Args:
+        mode (str): Mode name ("major" or "minor")
+        
+    Returns:
+        float: Brightness value (0.0-1.0)
+    """
+    
+    if mode.lower() == "major":
+        return 0.8  # Bright
+    elif mode.lower() == "minor":
+        return 0.4  # Dark
+    else:
+        return 0.6  # Neutral
+
+def detect_advanced_mode_key(audio_data, sample_rate):
+    """
+    Advanced detection with additional musical features
+    
+    Args:
+        audio_data (np.array): Audio samples (mono)
+        sample_rate (int): Sample rate in Hz
+        
+    Returns:
+        dict: Extended results with confidence and features
+    """
+    
+    key_extractor = es.KeyExtractor()
+    
+    try:
+        key, scale, strength = key_extractor(audio_data.astype(np.float32))
+        
+        mode = "minor" if "minor" in scale.lower() else "major"
+        key_num = get_key_number(key)
+        brightness = get_mode_brightness(mode)
+        
+        return {
+            "mode": mode,
+            "key": key,
+            "key_number": key_num,
+            "brightness": brightness,
+            "confidence": float(strength)
+        }
+        
+    except Exception as e:
+        print(f"Advanced mode/key detection error: {e}")
+        return {
+            "mode": "major",
+            "key": "C",
+            "key_number": 0,
+            "brightness": 0.6,
+            "confidence": 0.0
+        }
 
 # For testing
 if __name__ == "__main__":
@@ -88,7 +185,9 @@ if __name__ == "__main__":
     audio_path = "test_audio.mp3"
     try:
         audio_data, sr = librosa.load(audio_path, sr=None, mono=True)
-        tempo = detect_tempo(audio_data, sr)
-        print(f"Detected tempo: {tempo:.1f} BPM")
+        mode, key = detect_mode_key(audio_data, sr)
+        advanced_results = detect_advanced_mode_key(audio_data, sr)
+        print(f"Detected: {key} {mode}")
+        print(f"Advanced results: {advanced_results}")
     except:
         print("No test file found. Function ready for integration.")
