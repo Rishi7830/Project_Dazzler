@@ -1,0 +1,43 @@
+# Audio Processing Dependencies
+librosa==0.10.1
+essentia==2.1b6.dev1110
+
+# Numerical Computing
+numpy==1.24.3
+scipy==1.11.1
+
+# Data Manipulation
+pandas==2.0.3
+
+# Audio I/O and Real-time Processing
+sounddevice==0.4.6
+pyaudio==0.2.11
+
+# Parallel Processing (built into Python)
+# multiprocessing (included with Python)
+
+# Color Processing
+colorsys  # (built into Python)
+
+# File Handling
+pathlib  # (built into Python)
+
+# For advanced audio analysis
+# aubio==0.4.9
+# madmom==0.16.1
+
+# Development and Testing
+pytest==7.4.0  # For unit testing
+
+# Optional: For visualization (if needed for debugging)
+matplotlib==3.7.2
+seaborn==0.12.2
+
+# Optional: For GUI or web interface
+# tkinter (built into Python)
+# flask==2.3.2
+# fastapi==0.103.1
+
+# Optional: For hardware control (lighting devices)
+# pyserial==3.5  # For Arduino/serial devices
+# requests==2.31.0  # For HTTP-based lighting APIs
