@@ -15,6 +15,7 @@ from loudness_detection import detect_loudness
 from mode_key_detection import detect_mode_key
 from audio_analyzer import process_audio_features
 from color_mapper import map_to_colors
+#from pyserial import SimpleDMX
 
 def parallel_audio_analysis(audio_chunk, sample_rate):
     """
@@ -119,6 +120,8 @@ def process_mp3_realtime(mp3_file_path, chunk_duration=2.0, output_to_file=False
         print(f"  {key} {mode} |  {tempo:.1f} BPM |  {loudness:.1f} dB")
         print(f"  Color: {color} |  Speed: {hue_speed:.2f}")
         print(f"  ⏱Processed in {lighting_data['processing_time']:.2f}s\n")
+
+        #SimpleDMX(colour, hue_speed)
         
         # Store for optional file output
         if output_to_file:
