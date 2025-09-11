@@ -11,7 +11,7 @@ class SimpleDMX:
         self.strobe_on = False
         self.strobe_interval = strobe_interval
         self.color_to_strobe = (0, 0, 0, 0) # The color to use when strobing
-        self.thread = None
+        self.thread = None 
 
         try:
             # It's good practice to open the serial port *only* when needed or when starting broadcast
