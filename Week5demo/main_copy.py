@@ -14,7 +14,7 @@ from tempo_detection import detect_tempo
 #from Loudness_detection import detect_loudness
 #from mode_detection import detect_mode_key
 from audio_analyzer import process_audio_features
-from colourmapper import map_to_colors
+from color_mapper import map_to_colors
 from pyserial import SimpleDMX  # Import the SimpleDMX class
 
 # Define the DMX controller instance here, so it's accessible globally
