@@ -263,7 +263,7 @@ def main():
     print("=" * 50)
     
     # Configuration
-    mp3_file = "Downloads/song.mp3"  # Change this to your MP3 file
+    mp3_file = "scom.mp3"  # Change this to your MP3 file
     
     print("Choose processing mode:")
     print("1. Process MP3 file")
