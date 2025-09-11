@@ -13,7 +13,7 @@ from pathlib import Path
 from tempo_detection import detect_tempo
 #from Loudness_detection import detect_loudness
 #from mode_detection import detect_mode_key
-from audio_analyser import process_audio_features
+from audio_analyzer import process_audio_features
 from colourmapper import map_to_colors
 from pyserial import SimpleDMX  # Import the SimpleDMX class
 
