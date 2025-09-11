@@ -168,8 +168,8 @@ if __name__ == "__main__":
     
     # Example Usage for testing:
     # Replace with your actual serial port
-    SERIAL_PORT = "/dev/tty.usbserial-A50285BI" # Example for macOS
-    # SERIAL_PORT = "COM3" # Example for Windows
+    SERIAL_PORT = "COM13" # Example for Windows
+    # SERIAL_PORT = "/dev/tty.usbserial-A50285BI" # macOS
     
     dmx = SimpleDMX(port=SERIAL_PORT, num_channels=8, strobe_interval=0.5)
 
