@@ -344,4 +344,6 @@ def demo_pipeline():
     
 if __name__ == "__main__":
     main()
-
+    print("cwd =", Path.cwd())
+    print("file =", file)
+    print("mp3_file =", mp3_file, "resolved =", Path(mp3_file).resolve(), "exists =", Path(mp3_file).exists()) 

@@ -11,7 +11,7 @@ class SimpleDMX:
         self.strobe_on = False
         self.strobe_interval = strobe_interval
         self.color_to_strobe = (0, 0, 0, 0) # The color to use when strobing
-        self.thread = None
+        self.thread = None 
 
         try:
             # It's good practice to open the serial port *only* when needed or when starting broadcast
@@ -168,8 +168,8 @@ if __name__ == "__main__":
     
     # Example Usage for testing:
     # Replace with your actual serial port
-    SERIAL_PORT = '/dev/ttyS2' # Example for macOS
-    # SERIAL_PORT = "COM3" # Example for Windows
+    SERIAL_PORT = "COM14" # Example for Windows
+    # SERIAL_PORT = "/dev/tty.usbserial-A50285BI" # macOS
     
     dmx = SimpleDMX(port=SERIAL_PORT, num_channels=8, strobe_interval=0.5)
 
