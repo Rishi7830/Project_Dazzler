@@ -1,7 +1,19 @@
+"""
+Realtime MP3 → Feature Analysis + DMX output (no audio playback for WSL)
+Requires:
+  - ffmpeg in PATH (for decoding MP3 to PCM stream)
+  - local modules: tempo_detection, loudness_detection, mode_key_detection,
+    audio_analyzer.process_audio_features, color_mapper.map_to_colors
+  - local pyserial.SimpleDMX (wrapper around pySerial) or falls back to no-op
+"""
+
 import os
 import time
+import platform
+import subprocess
 from pathlib import Path
 import numpy as np
+
 from tempo_detection import detect_tempo
 from loudness_detection import detect_loudness
 from mode_key_detection import detect_mode_key
@@ -13,23 +25,58 @@ try:
 except Exception:
     SimpleDMX = None
 
-# Your existing _suggest_default_port and _NoopDMX and init_dmx_controller...
+
+def _suggest_default_port() -> str:
+    sysname = platform.system().lower()
+    if sysname.startswith("win"):
+        return os.environ.get("DAZZLER_DMX_PORT", "COM3")
+    if sysname == "darwin":
+        return os.environ.get("DAZZLER_DMX_PORT", "/dev/tty.usbserial")
+    return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB0")
+
+
+class _NoopDMX:
+    def start_broadcast(self): print("[DMX] Broadcast disabled (no hardware)")
+    def stop_broadcast(self): pass
+    def close(self): pass
+    def update_lighting(self, rgbw_tuple, hue_speed):
+        print(f"[DMX] (noop) {rgbw_tuple} speed={hue_speed:.2f}")
+
+
+def init_dmx_controller(port: str | None = None, num_channels: int = 8):
+    if SimpleDMX is None:
+        return _NoopDMX()
+    port = port or _suggest_default_port()
+    try:
+        dmx = SimpleDMX(port=port, num_channels=num_channels)
+        dmx.start_broadcast()
+        print(f"[DMX] Started on {port} channels={num_channels}")
+        return dmx
+    except Exception as e:
+        print(f"[DMX] Could not open {port}: {e} -> using noop")
+        return _NoopDMX()
+
 
 def stream_mp3_realtime(
     mp3_path: str,
     dmx,
     sample_rate: int = 44100,
     channels: int = 1,
-    audio_block: int = 1024,
-    chunk_seconds: float = 0.25,
-    hop_ratio: float = 0.5,
+    audio_block: int = 1024,       # playback block (samples per channel)
+    chunk_seconds: float = 0.25,   # analysis window length
+    hop_ratio: float = 0.5,        # analysis hop = 50% overlap
     save_json: bool = True,
 ):
+    """
+    Stream-decode MP3 in real time, analyze per window, update DMX lighting.
+    Audio playback via sounddevice is skipped for WSL compatibility.
+    """
     mp3_path = str(mp3_path)
     if not Path(mp3_path).exists():
         print(f"[ERR] File not found: {mp3_path}")
         return
 
+    # ffmpeg command to decode MP3 to 32-bit float PCM, mono, fixed sample rate
     cmd = [
         "ffmpeg",
         "-hide_banner", "-loglevel", "error",
@@ -45,17 +92,15 @@ def stream_mp3_realtime(
         print("[ERR] ffmpeg not found in PATH; install ffmpeg and retry")
         return
 
-    # Countdown effect 3, 2, 1 on DMX lights
+    # Countdown lighting sequence: 3 (red), 2 (orange), 1 (yellow)
     countdown_colors = [
-        (255, 0, 0, 0),  # red
-        (255, 128, 0, 0),  # orange
-        (255, 255, 0, 0),  # yellow
+        (255, 0, 0, 0),        # Red for 3
+        (255, 128, 0, 0),      # Orange for 2
+        (255, 255, 0, 0)       # Yellow for 1
     ]
-    for color in countdown_colors[::-1]:  # countdown 3,2,1
+    for color in reversed(countdown_colors):
         dmx.update_lighting(color, hue_speed=0)
         time.sleep(1)
-
-    # We do NOT start audio playback stream (sounddevice) here to avoid errors in WSL.
 
     bytes_per_sample = 4  # float32
     frame_bytes = audio_block * channels * bytes_per_sample
@@ -70,7 +115,7 @@ def stream_mp3_realtime(
         while True:
             raw = proc.stdout.read(frame_bytes)
             if not raw or len(raw) < frame_bytes:
-                break
+                break    # End of stream
 
             block = np.frombuffer(raw, dtype=np.float32)
             analysis_buffer = np.concatenate((analysis_buffer, block))
@@ -80,6 +125,7 @@ def stream_mp3_realtime(
                 mode, key = detect_mode_key(window, sample_rate)
                 tempo = detect_tempo(window, sample_rate)
                 loudness = detect_loudness(window, sample_rate)
+
                 color_name, hue_speed = process_audio_features(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
@@ -89,9 +135,18 @@ def stream_mp3_realtime(
                 dmx.update_lighting(rgbw, hue_speed)
 
                 results.append({
-                    "time_position": (len(results)*hop_samples)/sample_rate,
-                    "features": {"mode": mode, "key": key, "tempo": float(tempo), "loudness": float(loudness)},
-                    "lighting": {"color": color_name, "rgbw": rgbw, "hue_speed": float(hue_speed)}
+                    "time_position": (len(results) * hop_samples) / sample_rate,
+                    "features": {
+                        "mode": mode,
+                        "key": key,
+                        "tempo": float(tempo),
+                        "loudness": float(loudness)
+                    },
+                    "lighting": {
+                        "color": color_name,
+                        "rgbw": rgbw,
+                        "hue_speed": float(hue_speed)
+                    }
                 })
 
                 analysis_buffer = analysis_buffer[hop_samples:]
@@ -115,7 +170,8 @@ def stream_mp3_realtime(
         print(f"[ERR] Exception: {e}")
 
     finally:
-        pass  # No playback stream to stop in WSL
+        # no audio playback stream to stop in WSL, pass
+        pass
 
 
 if __name__ == "__main__":
