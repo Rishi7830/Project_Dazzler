@@ -1,0 +1,9 @@
+track_name_raw,window_ms,hop_ms,tempo_pred,track_name,tempo_gt,rel_err,correct
+Bir Damla Gözlerimde,23.2,2.9,124.5474548339844,Bir Damla Gözlerimde - Live,107.069,0.16324477518221334,False
+Bir Damla Gözlerimde,23.2,5.8,124.5474548339844,Bir Damla Gözlerimde - Live,107.069,0.16324477518221334,False
+Bir Damla Gözlerimde,46.4,5.8,124.5474548339844,Bir Damla Gözlerimde - Live,107.069,0.16324477518221334,False
+Bir Damla Gözlerimde,46.4,11.6,124.5474548339844,Bir Damla Gözlerimde - Live,107.069,0.16324477518221334,False
+Bir Damla Gözlerimde,92.9,11.6,124.5474548339844,Bir Damla Gözlerimde - Live,107.069,0.16324477518221334,False
+Bir Damla Gözlerimde,92.9,23.2,124.5474548339844,Bir Damla Gözlerimde - Live,107.069,0.16324477518221334,False
+Bir Damla Gözlerimde,185.8,23.2,124.5474548339844,Bir Damla Gözlerimde - Live,107.069,0.16324477518221334,False
+Bir Damla Gözlerimde,185.8,46.4,124.5474548339844,Bir Damla Gözlerimde - Live,107.069,0.16324477518221334,False
