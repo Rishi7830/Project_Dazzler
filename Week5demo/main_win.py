@@ -62,9 +62,9 @@ def stream_mp3_realtime(
     dmx,
     sample_rate: int = 44100,
     channels: int = 1,
-    audio_block: int = 1024,       # playback block (samples per channel)
-    chunk_seconds: float = 0.25,   # analysis window length
-    hop_ratio: float = 0.5,        # analysis hop = 50% overlap
+    audio_block: int = 1024,
+    chunk_seconds: float = 0.25,
+    hop_ratio: float = 0.5,
     save_json: bool = True,
 ):
     """
@@ -76,7 +76,6 @@ def stream_mp3_realtime(
         print(f"[ERR] File not found: {mp3_path}")
         return
 
-    # ffmpeg command to decode MP3 to 32-bit float PCM, mono, fixed sample rate
     cmd = [
         "ffmpeg",
         "-hide_banner", "-loglevel", "error",
