@@ -1,10 +1,6 @@
 """
 Realtime MP3 → Feature Analysis + DMX output (no audio playback for WSL)
-Requires:
-  - ffmpeg in PATH (for decoding MP3 to PCM stream)
-  - local modules: tempo_detection, loudness_detection, mode_key_detection,
-    audio_analyzer.process_audio_features, color_mapper.map_to_colors
-  - local pyserial.SimpleDMX (wrapper around pySerial) or falls back to no-op
+Requires ffmpeg, local feature modules, and color_mapper.map_to_colors, pyserial.SimpleDMX
 """
 
 import os
@@ -62,14 +58,14 @@ def stream_mp3_realtime(
     dmx,
     sample_rate: int = 44100,
     channels: int = 1,
-    audio_block: int = 1024,
-    chunk_seconds: float = 0.25,
-    hop_ratio: float = 0.5,
+    audio_block: int = 1024,     # playback block (samples per channel)
+    chunk_seconds: float = 0.25, # analysis window length
+    hop_ratio: float = 0.5,      # analysis hop = 50% overlap
     save_json: bool = True,
 ):
     """
-    Stream-decode MP3 in real time, analyze per window, update DMX lighting.
-    Audio playback via sounddevice is skipped for WSL compatibility.
+    Stream-decode MP3 in real time, analyze features per window,
+    update DMX lighting, print progress, and skip audio playback in WSL.
     """
     mp3_path = str(mp3_path)
     if not Path(mp3_path).exists():
@@ -85,20 +81,22 @@ def stream_mp3_realtime(
         "-ar", str(sample_rate),
         "pipe:1",
     ]
+
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     except FileNotFoundError:
         print("[ERR] ffmpeg not found in PATH; install ffmpeg and retry")
         return
 
-    # Countdown lighting sequence: 3 (red), 2 (orange), 1 (yellow)
+    # 3-2-1 countdown: lights and terminal in sync
     countdown_colors = [
-        (255, 0, 0, 0),        # Red for 3
-        (255, 128, 0, 0),      # Orange for 2
-        (255, 255, 0, 0)       # Yellow for 1
+        (255,   0,   0, 0),  # Red for 3
+        (255, 128,   0, 0),  # Orange for 2
+        (255, 255,   0, 0)   # Yellow for 1
     ]
-    for color in reversed(countdown_colors):
+    for i, color in enumerate(reversed(countdown_colors), start=1):
         dmx.update_lighting(color, hue_speed=0)
+        print(f"Countdown: {4 - i}")  # prints "3", "2", "1" to WSL terminal
         time.sleep(1)
 
     bytes_per_sample = 4  # float32
@@ -108,23 +106,29 @@ def stream_mp3_realtime(
     analysis_buffer = np.empty(0, dtype=np.float32)
     results = []
 
-    print(f"[RUN] Streaming {mp3_path} at {sample_rate} Hz")
+    start_time = time.time()
+
+    print(f"[RUN] Streaming {mp3_path} at {sample_rate} Hz - chunk={chunk_seconds}s, hop={hop_ratio}")
 
     try:
         while True:
             raw = proc.stdout.read(frame_bytes)
             if not raw or len(raw) < frame_bytes:
-                break    # End of stream
+                break  # End of stream
 
             block = np.frombuffer(raw, dtype=np.float32)
             analysis_buffer = np.concatenate((analysis_buffer, block))
 
             while analysis_buffer.size >= chunk_samples:
+                elapsed = time.time() - start_time
+                print(f"Progress: {elapsed:.2f} seconds")  # Live timer in terminal
+
                 window = analysis_buffer[:chunk_samples]
                 mode, key = detect_mode_key(window, sample_rate)
                 tempo = detect_tempo(window, sample_rate)
                 loudness = detect_loudness(window, sample_rate)
 
+                # Use your audio_analyzer and color_mapper modules
                 color_name, hue_speed = process_audio_features(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
@@ -169,8 +173,7 @@ def stream_mp3_realtime(
         print(f"[ERR] Exception: {e}")
 
     finally:
-        # no audio playback stream to stop in WSL, pass
-        pass
+        pass  # No audio playback stream to stop in WSL
 
 
 if __name__ == "__main__":
