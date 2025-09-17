@@ -3,7 +3,7 @@ from tkinter import ttk, messagebox
 from PIL import Image, ImageTk, ImageDraw
 import random
 
-# ----------------- Helper Classes -----------------
+# Helper Classes
 class ToolTip:
     """Create a tooltip for a given widget."""
     def __init__(self, widget, text="Tooltip"):
@@ -32,11 +32,11 @@ class ToolTip:
             self.tooltip_window = None
 
 
-# ----------------- Main Application -----------------
+# Main Application
 class DazzlerDashboard:
     def __init__(self, root):
         self.root = root
-        self.root.title("🎧 Dazzler Dashboard 🎧")
+        self.root.title("Dazzler Dashboard")
         self.root.geometry("800x600")
 
         # Music fun facts
@@ -60,10 +60,10 @@ class DazzlerDashboard:
         # Create status bar
         self.create_status_bar()
 
-    # ----------------- UI Setup -----------------
+    # UI Setup
     def load_background(self):
         """Load and place background with translucent overlay."""
-        image_path = r"C:\Users\Rishi Moorthy\Desktop\dazzler\image.jpg"
+        image_path = r"C:\Users\Rishi Moorthy\Desktop\dazzler\image.jpg" #change directory to image
         try:
             pil_image = Image.open(image_path).resize((800, 600)).convert("RGBA")
             overlay = pil_image.copy()
@@ -159,14 +159,14 @@ class DazzlerDashboard:
                           font=("Helvetica", 9))
         status.pack(side="bottom", fill="x")
 
-    # ----------------- Functionalities -----------------
+    # Functionalities
     def display_genre(self):
         """Show selected genre and random fact."""
         genre = self.genre_var.get()
         if genre:
             self.output_label.config(text=f"🎵 You selected: {genre}")
             fact = random.choice(self.music_facts)
-            self.fact_label.config(text=f"💡 Fun Fact: {fact}")
+            self.fact_label.config(text=f"Fun Fact: {fact}")
             self.status_var.set(f"Genre '{genre}' selected successfully!")
         else:
             self.output_label.config(text="")
@@ -178,14 +178,15 @@ class DazzlerDashboard:
 
     def show_about(self):
         messagebox.showinfo("About",
-                            "🎧 Dazzler Dashboard\n\nA fun music genre selector with cool UI effects!\nCreated with Python Tkinter.")
+                            "Dazzler Dashboard\n\n Automate Stage Lighting.")
 
 
-# ----------------- Run App -----------------
+# Run App
 if __name__ == "__main__":
     root = tk.Tk()
     app = DazzlerDashboard(root)
     root.mainloop()
+
 
 
 
