@@ -11,8 +11,8 @@ from pathlib import Path
 
 # Import your modules
 from tempo_detection import detect_tempo
-#from Loudness_detection import detect_loudness
-#from mode_detection import detect_mode_key
+from loudness_detection import detect_loudness
+from mode_key_detection import detect_mode_key
 from audio_analyzer import process_audio_features
 from color_mapper import map_to_colors
 from pyserial import SimpleDMX  # Import the SimpleDMX class
@@ -32,9 +32,8 @@ def parallel_audio_analysis(audio_chunk, sample_rate):
     tempo = detect_tempo(audio_chunk, sample_rate)
     
     # Mock mode, key, loudness
-    mode = "Major"
-    key = "C"
-    loudness = -20.0  # in dB, arbitrary placeholder
+    mode, key = detect_mode_key(audio_chunk, sample_rate)
+    loudness = detect_loudness(audio_chunk, sample_rate)  # in dB, arbitrary placeholder
     
     print(f"Detected (mocked): {key} {mode}, {tempo:.1f} BPM, {loudness:.1f} dB")
     return mode, key, tempo, loudness
@@ -263,7 +262,7 @@ def main():
     print("=" * 50)
     
     # Configuration
-    mp3_file = "scom.mp3"  # Change this to your MP3 file
+    mp3_file = "Desktop/Dazzler/Roar.mp3"  # Change this to your MP3 file
     
     print("Choose processing mode:")
     print("1. Process MP3 file")

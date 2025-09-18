@@ -23,20 +23,22 @@ from mode_key_detection import detect_mode_key
 from audio_analyzer import process_audio_features
 from color_mapper import map_to_colors
 
-# --- DMX wiring (copied from earlier pattern) ---
+
 try:
     from pyserial import SimpleDMX
 except Exception:
     SimpleDMX = None
 
+# --- DMX port suggestion based on OS ---
 def _suggest_default_port() -> str:
     sysname = platform.system().lower()
     if sysname.startswith("win"):
-        return os.environ.get("DAZZLER_DMX_PORT", "COM3")
+        return os.environ.get("DAZZLER_DMX_PORT", "/dev/tty.usbserial-A50285BI")
     if sysname == "darwin":
-        return os.environ.get("DAZZLER_DMX_PORT", "/dev/tty.usbserial")
+        return os.environ.get("DAZZLER_DMX_PORT", "/dev/tty.usbserial-A50285BI")
     return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB0")
 
+# --- DMX controller initialization (or no-operation if no hardware) ---
 class _NoopDMX:
     def start_broadcast(self): print("[DMX] Broadcast disabled (no hardware)")
     def stop_broadcast(self): pass
@@ -65,7 +67,7 @@ def stream_mp3_realtime(
     channels: int = 1,
     audio_block: int = 1024,       # playback block (samples per channel)
     chunk_seconds: float = 0.25,   # analysis window length
-    hop_ratio: float = 0.5,        # analysis hop = 50% overlap
+    hop_ratio: float = 0.2,        # analysis hop = 50% overlap
     save_json: bool = True,
 ):
     """
@@ -184,7 +186,11 @@ def stream_mp3_realtime(
 
 if __name__ == "__main__":
     # Choose file next to this script by default
-    mp3_file = Path(__file__).with_name("scom.mp3")
+    #mp3_file = Path.home() / "Desktop"/"Dazzler"/"Songs_For_Demo"/"Therefore I Am.mp3"
+    #mp3_file = Path.home() / "Desktop"/"Dazzler"/"Songs_For_Demo"/"Roar.mp3"
+    #mp3_file = Path.home() / "Desktop"/"Dazzler"/"Songs_For_Demo"/"Routine.mp3"
+    #mp3_file = Path.home() / "Desktop"/"Dazzler"/"Songs_For_Demo"/"Shot In The Dark.mp3"
+    mp3_file = Path.home() / "Desktop"/"Dazzler"/"Songs_For_Demo"/"Subhanallah.mp3"
     dmx = init_dmx_controller(port=None, num_channels=8)
 
     # Lower chunk_seconds for faster lighting response; trade-off stability/CPU
@@ -195,7 +201,7 @@ if __name__ == "__main__":
         channels=1,
         audio_block=1024,
         chunk_seconds=0.25,
-        hop_ratio=0.5,
+        hop_ratio=0.8,
         save_json=True,
     )
 
