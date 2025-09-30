@@ -1,21 +1,7 @@
-import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.neighbors import KNeighborsClassifier
+import pandas as pd
 
-
-
-# Load the dataset
-file_path = 'week6_demo_data.csv'
-data = pd.read_csv(file_path)
-
-data['mode_scaled'] = data['mode'].map({1: 1, 0: -1}) 
-data['harmony_scaled'] = data['harmony'].map({'simple': 1, 'complex': -1})
-scaler = StandardScaler()
-data[['tempo_scaled', 'loudness_scaled']] = scaler.fit_transform(data[['tempo', 'loudness']])
-data['rhythm_scaled'] = 0
-
-
+# mood weights from the trained knn model
 mood_weights = {
     "Pleasure": [12, 11, -7, -5, 0],
     "Excitement": [24, 16, 20, -10, 10],
@@ -29,55 +15,41 @@ mood_weights = {
 
 mood_df = pd.DataFrame(mood_weights, index=["Mode", "Harmony", "Tempo", "Rhythm", "Loudness"])
 
-def calculate_weighted_sum(row, mood_df):
-    return np.dot(mood_df.T.values, row) 
-features = data[['mode_scaled', 'harmony_scaled', 'tempo_scaled', 'rhythm_scaled', 'loudness_scaled']]
-weighted_sums = features.apply(lambda row: calculate_weighted_sum(row, mood_df), axis=1)
-predicted_moods = weighted_sums.apply(lambda x: mood_df.columns[np.argmax(x)])
-data['predicted_mood'] = predicted_moods
-
-print(data[['track_id', 'mode_scaled', 'harmony_scaled', 'tempo_scaled', 'loudness_scaled', 'predicted_mood']].head())
-
-# data.to_csv('predicted_mood_data.csv', index=False)
-
-
-
-features = data[['mode_scaled', 'harmony_scaled', 'tempo_scaled', 'rhythm_scaled', 'loudness_scaled']]
-
-mood_mapping = {mood: idx for idx, mood in enumerate(mood_df.columns)}
-data['mood_label'] = data['predicted_mood'].map(mood_mapping)
-
-X = features
-y = data['mood_label']
-
-scaler = StandardScaler()
-X = scaler.fit_transform(X)
-
-
-knn = KNeighborsClassifier(n_neighbors=5)
-knn.fit(X, y)
-
-
-
-
-
-def predict_mood_for_chunk(knn_model, scaler, features, chunk_start=0, chunk_end=5):
+def preprocess_features(loudness: float, mode: str, key: str, tempo: float) -> list:
     """
-    Predict the mood for a 5-second chunk based on the features (mode, harmony, tempo, rhythm, loudness).
-    knn_model: Trained KNN classifier
-    scaler: StandardScaler to transform the input features
-    features: The features list for the chunk in question
-    chunk_start: Start time of the chunk in seconds (default is 0)
-    chunk_end: End time of the chunk in seconds (default is 5)
+    Convert audio analyzer features to scaled numeric features for mood prediction.
+
+    Args:
+        loudness (float): loudness in dB, e.g., -20
+        mode (str): "major" or "minor"
+        key (str): key name, e.g., "C", "G", "F#"
+        tempo (float): tempo in BPM, e.g., 120
+
+    Returns:
+        list: [mode_scaled, harmony_scaled, tempo_scaled, rhythm_scaled, loudness_scaled]
     """
-    
-    chunk_features = np.array(features).reshape(1, -1)
-    chunk_features_scaled = scaler.transform(chunk_features)
-    
-    predicted_label = knn_model.predict(chunk_features_scaled)
-    predicted_mood = list(mood_mapping.keys())[list(mood_mapping.values()).index(predicted_label[0])]
-    
+    # Mode: major -> 1, minor -> -1
+    mode_scaled = 1 if mode.lower() == 'major' else -1
+
+    # Harmony: if key has sharps/flats, assume "complex" (-1); else, "simple" (1)
+    harmony_scaled = -1 if ('#' in key or 'b' in key) else 1
+
+    # Tempo: normalized around 120 BPM, std ~40 (adjust as needed)
+    tempo_scaled = (tempo - 120) / 40
+
+    # Rhythm: not used in audio_analyzer, so set to 0
+    rhythm_scaled = 0
+
+    # Loudness: map [-60, -10] dB to [-1, 1]
+    loudness_clipped = np.clip(loudness, -60, -10)
+    loudness_scaled = (loudness_clipped + 60) / 25 - 1
+
+    return [mode_scaled, harmony_scaled, tempo_scaled, rhythm_scaled, loudness_scaled]
+
+def predict_mood(features: list) -> str:
+    """
+    Predict mood from preprocessed features (see preprocess_features).
+    """
+    weighted_sums = np.dot(mood_df.T.values, features)
+    predicted_mood = mood_df.columns[np.argmax(weighted_sums)]
     return predicted_mood
-
-
-#print(f"Predicted mood for this chunk: {predicted_mood}")
