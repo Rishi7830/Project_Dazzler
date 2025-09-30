@@ -2,7 +2,7 @@ import time
 import numpy as np
 import librosa
 
-from mood_color_map import mood_color_map
+from mood_color_map import mood_color_map  # ← Make sure this is defined or a dict in your code
 from Buffer_Manager_Week7 import AudioBuffer
 from Mode_Extraction_Week7 import detect_mode_key
 from Tempo_detection_week7 import detect_tempo
@@ -19,33 +19,32 @@ HOP_SIZE = int(HOP_SEC * SR)
 
 buffer = AudioBuffer(WINDOW_SIZE)
 
-def set_terminal_color(r, g, b):
-    print(f'\033[48;2;{r};{g};{b}m', end='')
+# ——————————————————————————————————
+# REPLACEMENT FOR TKINTER: Terminal color block
+def set_color(rgb):
+    r, g, b = rgb
+    print(f"\033[48;2;{r};{g};{b}m", end='')
 
-def reset_terminal():
-    print('\033[0m', end='')
+def reset_color():
+    print("\033[0m", end='')
 
 def update_color(rgb):
-    r, g, b = rgb
-    color_hex = f'#{r:02x}{g:02x}{b:02x}'
-    print(f'\rColor: {color_hex} (RGB: {r}, {g}, {b}) ', end='', flush=True)
-    # Visual color block in terminal (optional: works if terminal supports 24-bit color)
-    set_terminal_color(r, g, b)
-    print(' ' * 20, end='', flush=True)
-    reset_terminal()
-    print('\r', end='', flush=True)
+    set_color(rgb)
+    print(' ' * 40, end='\r', flush=True)
+    reset_color()
 
-countdown_colors = [(255, 0, 0), (255, 165, 0), (255, 255, 0)]  # Red, Orange, Yellow
+countdown_colors = [(255, 0, 0), (255, 165, 0), (255, 255, 0)]
 
 def countdown():
-    for i, color in enumerate(countdown_colors, start=1):
+    for idx, color in enumerate(countdown_colors, 1):
         update_color(color)
-        print(f'{i}')
+        print(f'{idx}')
         time.sleep(1)
+# ———————————————————————————————————
 
 def audio_source_from_mp3(file_path):
     y, sr = librosa.load(file_path, sr=SR, mono=True)
-    print(f'Loaded {file_path} with {len(y)} samples at {sr} Hz')
+    print(f"Loaded {file_path} with {len(y)} samples at {sr} Hz")
     pos = 0
     while pos < len(y):
         chunk = y[pos:pos+HOP_SIZE]
@@ -66,21 +65,15 @@ def run_real_time_processing(file_path):
         bpm, rhythm_index = extract_rhythm(audio_window)
         _, _, _, _, harmony_class = extract_harmony(audio_window)
 
-        features = preprocess_features(
-            mode, key, tempo, loudness, rhythm_index, harmony_class
-        )
+        features = preprocess_features(mode, key, tempo, loudness, rhythm_index, harmony_class)
         mood = predict_mood(features)
 
-        color = mood_color_map.get(mood, (255, 255, 255))  # default white
+        color = mood_color_map.get(mood, (255, 255, 255))
         update_color(color)
 
         time.sleep(HOP_SEC)
 
 if __name__ == '__main__':
-    mp3_path = 'scom.mp3'  # Update this path to your mp3 file
+    mp3_path = 'scom.mp3'  # ← Change this to your file
     countdown()
-    try:
-        run_real_time_processing(mp3_path)
-    except KeyboardInterrupt:
-        reset_terminal()
-        print('\nColor display stopped by user.')
+    run_real_time_processing(mp3_path)
