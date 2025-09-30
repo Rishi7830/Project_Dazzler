@@ -1,7 +1,12 @@
 import essentia.standard as es
 
-def detect_loudness(audio_chunk):
-    """Detect loudness (dB) from an audio chunk (e.g., 5 seconds)."""
+def detect_loudness(audio_buffer):
+    """
+    Returns loudness in dB from an audio buffer.
+    """
     loudness_extractor = es.Loudness()
-    loudness = loudness_extractor(audio_chunk)
+    try:
+        loudness = loudness_extractor(audio_buffer)
+    except Exception:
+        loudness = -60.0  # Quiet fallback
     return loudness
