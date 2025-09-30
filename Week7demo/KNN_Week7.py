@@ -1,5 +1,8 @@
 import time
 import tkinter as tk
+import numpy as np
+import librosa
+
 from mood_color_map import mood_color_map
 from Buffer_Manager_Week7 import AudioBuffer
 from Mode_Extraction_Week7 import detect_mode_key
@@ -16,6 +19,7 @@ WINDOW_SIZE = int(WINDOW_SEC * SR)
 HOP_SIZE = int(HOP_SEC * SR)
 
 buffer = AudioBuffer(WINDOW_SIZE)
+
 root = tk.Tk()
 root.geometry('400x400')
 root.title('Real-Time Mood Color')
@@ -26,23 +30,29 @@ def update_color(rgb):
     root.configure(bg=color_hex)
     root.update()
 
-# Countdown colors: red, orange, yellow
-countdown_colors = [(255, 0, 0), (255, 165, 0), (255, 255, 0)]
+# Countdown with numbers 1, 2, 3 printed to signal playback start
+countdown_colors = [(255, 0, 0), (255, 165, 0), (255, 255, 0)]  # Red, Orange, Yellow
 
 def countdown():
-    for i, color in enumerate(reversed(countdown_colors), start=1):
+    for i, color in enumerate(countdown_colors, start=1):
         update_color(color)
-        print(f"Countdown: {4 - i}")
+        print(f"{i}")
         time.sleep(1)
 
-def audio_source():
-    import numpy as np
-    while True:
-        # Replace this with your real audio source yielding HOP_SIZE length numpy arrays
-        yield np.random.uniform(-1, 1, HOP_SIZE).astype('float32')
+def audio_source_from_mp3(file_path):
+    y, sr = librosa.load(file_path, sr=SR, mono=True)
+    print(f"Loaded {file_path} with {len(y)} samples at {sr} Hz")
+    pos = 0
+    while pos < len(y):
+        chunk = y[pos:pos+HOP_SIZE]
+        if len(chunk) < HOP_SIZE:
+            chunk = np.pad(chunk, (0, HOP_SIZE - len(chunk)), 'constant')
+        yield chunk.astype(np.float32)
+        pos += HOP_SIZE
 
-def run_real_time_processing():
-    for chunk in audio_source():
+def run_real_time_processing(file_path):
+    source = audio_source_from_mp3(file_path)
+    for chunk in source:
         buffer.update(chunk)
         audio_window = buffer.get_window()
 
@@ -52,7 +62,9 @@ def run_real_time_processing():
         bpm, rhythm_index = extract_rhythm(audio_window)
         _, _, _, _, harmony_class = extract_harmony(audio_window)
 
-        features = preprocess_features(mode, key, tempo, loudness, rhythm_index, harmony_class)
+        features = preprocess_features(
+            mode, key, tempo, loudness, rhythm_index, harmony_class
+        )
         mood = predict_mood(features)
 
         color = mood_color_map.get(mood, (255, 255, 255))  # default white
@@ -61,6 +73,7 @@ def run_real_time_processing():
         time.sleep(HOP_SEC)
 
 if __name__ == '__main__':
+    mp3_path = 'scom.mp3'  # Update this path to your mp3 file
     countdown()
-    run_real_time_processing()
+    run_real_time_processing(mp3_path)
     root.mainloop()
