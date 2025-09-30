@@ -1,5 +1,4 @@
 import time
-import tkinter as tk
 import numpy as np
 import librosa
 
@@ -20,28 +19,33 @@ HOP_SIZE = int(HOP_SEC * SR)
 
 buffer = AudioBuffer(WINDOW_SIZE)
 
-root = tk.Tk()
-root.geometry('400x400')
-root.title('Real-Time Mood Color')
+def set_terminal_color(r, g, b):
+    print(f'\033[48;2;{r};{g};{b}m', end='')
+
+def reset_terminal():
+    print('\033[0m', end='')
 
 def update_color(rgb):
     r, g, b = rgb
     color_hex = f'#{r:02x}{g:02x}{b:02x}'
-    root.configure(bg=color_hex)
-    root.update()
+    print(f'\rColor: {color_hex} (RGB: {r}, {g}, {b}) ', end='', flush=True)
+    # Visual color block in terminal (optional: works if terminal supports 24-bit color)
+    set_terminal_color(r, g, b)
+    print(' ' * 20, end='', flush=True)
+    reset_terminal()
+    print('\r', end='', flush=True)
 
-# Countdown with numbers 1, 2, 3 printed to signal playback start
 countdown_colors = [(255, 0, 0), (255, 165, 0), (255, 255, 0)]  # Red, Orange, Yellow
 
 def countdown():
     for i, color in enumerate(countdown_colors, start=1):
         update_color(color)
-        print(f"{i}")
+        print(f'{i}')
         time.sleep(1)
 
 def audio_source_from_mp3(file_path):
     y, sr = librosa.load(file_path, sr=SR, mono=True)
-    print(f"Loaded {file_path} with {len(y)} samples at {sr} Hz")
+    print(f'Loaded {file_path} with {len(y)} samples at {sr} Hz')
     pos = 0
     while pos < len(y):
         chunk = y[pos:pos+HOP_SIZE]
@@ -75,5 +79,8 @@ def run_real_time_processing(file_path):
 if __name__ == '__main__':
     mp3_path = 'scom.mp3'  # Update this path to your mp3 file
     countdown()
-    run_real_time_processing(mp3_path)
-    root.mainloop()
+    try:
+        run_real_time_processing(mp3_path)
+    except KeyboardInterrupt:
+        reset_terminal()
+        print('\nColor display stopped by user.')
