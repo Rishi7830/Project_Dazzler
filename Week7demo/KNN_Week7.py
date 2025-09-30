@@ -11,6 +11,7 @@ mood_weights = {
     "Sleepiness": [-12, 4, -16, -9, -20],
     "Relaxation": [3, 10, -20, -2, -10]
 }
+
 mood_df = pd.DataFrame(mood_weights, index=["Mode", "Harmony", "Tempo", "Rhythm", "Loudness"])
 
 def preprocess_features(mode, key, tempo, loudness, rhythm_index, harmony_class):
