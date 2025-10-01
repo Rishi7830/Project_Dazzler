@@ -1,10 +1,8 @@
-import time
-import numpy as np
 import os
+import numpy as np
 import librosa
-import csv
+from concurrent.futures import ThreadPoolExecutor
 
-from mood_color_map import mood_color_map
 from Buffer_Manager_Week7 import AudioBuffer
 from Mode_Extraction_Week7 import detect_mode_key
 from Tempo_detection_week7 import detect_tempo
@@ -19,61 +17,17 @@ HOP_SEC = 2.5
 WINDOW_SIZE = int(WINDOW_SEC * SR)
 HOP_SIZE = int(HOP_SEC * SR)
 
-buffer = AudioBuffer(WINDOW_SIZE)
-
-def rgb_to_ansi_bg(r, g, b):
-    return f"\033[48;2;{r};{g};{b}m"
-
-def reset_ansi():
-    return "\033[0m"
-
-def clear_screen():
-    if os.name == 'nt':
-        os.system('cls')
-    else:
-        os.system('clear')
-
-def print_color_block(rgb, lines=20, width=80):
-    bg_code = rgb_to_ansi_bg(*rgb)
-    reset_code = reset_ansi()
-    clear_screen()
-    for _ in range(lines):
-        print(f"{bg_code}{' ' * width}{reset_code}")
-
-def print_mood_info(mood, rgb):
-    print(f"Mood: {mood:<12s} RGB: {rgb}")
-
-def countdown():
-    for i in range(1, 4):
-        clear_screen()
-        print(i)
-        time.sleep(1)
-    clear_screen()
-    print("Start playing your song NOW!")
-
-def audio_source_from_mp3(file_path):
-    y, sr = librosa.load(file_path, sr=SR, mono=True)
-    print(f"Loaded {file_path} ({len(y)/sr:.2f} seconds)")
+def process_single_file(filepath):
+    print(f"Processing {filepath}...")
+    y, sr = librosa.load(filepath, sr=SR, mono=True)
+    buffer = AudioBuffer(WINDOW_SIZE)
+    chunk_moods = []
+    
     pos = 0
     while pos < len(y):
         chunk = y[pos:pos + HOP_SIZE]
         if len(chunk) < HOP_SIZE:
             chunk = np.pad(chunk, (0, HOP_SIZE - len(chunk)), 'constant')
-        yield chunk.astype(np.float32)
-        pos += HOP_SIZE
-
-def save_moods_to_csv(mood_list, filepath="mood_colors.csv"):
-    with open(filepath, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(["Chunk Index", "Mood", "Color_R", "Color_G", "Color_B"])
-        for idx, (mood, color) in enumerate(mood_list, 1):
-            writer.writerow([idx, mood, *color])
-
-def run_real_time_processing(mp3_filepath):
-    source = audio_source_from_mp3(mp3_filepath)
-    start_time = time.time()
-    mood_list = []  # Store moods per chunk
-    for chunk in source:
         buffer.update(chunk)
         audio_win = buffer.get_window()
 
@@ -85,24 +39,33 @@ def run_real_time_processing(mp3_filepath):
 
         features = preprocess_features(mode, key, tempo, loudness, rhythm_index, harmony_class)
         mood = predict_mood(features)
-        mood_list.append((mood, mood_color_map.get(mood, (255, 255, 255))))
 
-        color = mood_color_map.get(mood, (255, 255, 255))
-        print_color_block(color)
-        print_mood_info(mood, color)
+        timestamp = pos / SR
+        chunk_moods.append((timestamp, mood))
+        pos += HOP_SIZE
+    
+    print(f"Finished {filepath}. Moods and timestamps:")
+    for ts, mood in chunk_moods:
+        print(f"{ts:.2f}s: {mood}")
+    
+    return chunk_moods
 
-        elapsed = time.time() - start_time
-        remaining = max(0, (len(buffer.buffer) / SR) - elapsed)  # example
-        time.sleep(HOP_SEC)
-
-    clear_screen()
-    print("Mood list for the entire audio:")
-    for idx, (mood, color) in enumerate(mood_list, 1):
-        print(f"Chunk {idx}: Mood = {mood}, Color = {color}")
-
-    save_moods_to_csv(mood_list)
+def process_files_concurrently(filepaths, max_workers=4):
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(process_single_file, filepaths))
+    return results
 
 if __name__ == '__main__':
-    mp3_path = input("Enter your MP3 filepath: ").strip()
-    countdown()
-    run_real_time_processing(mp3_path)
+    # Example usage, replace with your actual MP3 paths
+    file_list = [
+        "path/to/song1.mp3",
+        "path/to/song2.mp3",
+        # add more Mp3 file paths here
+    ]
+    results = process_files_concurrently(file_list)
+
+    for file, moods in zip(file_list, results):
+        print(f"\nResults for {file}:")
+        for ts, mood in moods:
+            print(f"{ts:.2f} s - Mood: {mood}")
+        print()
