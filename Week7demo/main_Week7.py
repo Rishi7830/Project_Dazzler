@@ -2,6 +2,7 @@ import time
 import numpy as np
 import os
 import librosa
+import csv
 
 from mood_color_map import mood_color_map
 from Buffer_Manager_Week7 import AudioBuffer
@@ -61,12 +62,17 @@ def audio_source_from_mp3(file_path):
         yield chunk.astype(np.float32)
         pos += HOP_SIZE
 
+def save_moods_to_csv(mood_list, filepath="mood_colors.csv"):
+    with open(filepath, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["Chunk Index", "Mood", "Color_R", "Color_G", "Color_B"])
+        for idx, (mood, color) in enumerate(mood_list, 1):
+            writer.writerow([idx, mood, *color])
+
 def run_real_time_processing(mp3_filepath):
     source = audio_source_from_mp3(mp3_filepath)
     start_time = time.time()
-    
-    mood_list = []  # To store moods per chunk
-
+    mood_list = []  # Store moods per chunk
     for chunk in source:
         buffer.update(chunk)
         audio_win = buffer.get_window()
@@ -79,25 +85,24 @@ def run_real_time_processing(mp3_filepath):
 
         features = preprocess_features(mode, key, tempo, loudness, rhythm_index, harmony_class)
         mood = predict_mood(features)
-
-        mood_list.append(mood)
+        mood_list.append((mood, mood_color_map.get(mood, (255, 255, 255))))
 
         color = mood_color_map.get(mood, (255, 255, 255))
         print_color_block(color)
         print_mood_info(mood, color)
 
         elapsed = time.time() - start_time
-        remaining = max(0, (len(buffer.buffer) / SR) - elapsed)
+        remaining = max(0, (len(buffer.buffer) / SR) - elapsed)  # example
         time.sleep(HOP_SEC)
 
-    # After processing is complete, print mood list with colors
     clear_screen()
     print("Mood list for the entire audio:")
-    for idx, mood in enumerate(mood_list, 1):
-        color = mood_color_map.get(mood)
+    for idx, (mood, color) in enumerate(mood_list, 1):
         print(f"Chunk {idx}: Mood = {mood}, Color = {color}")
 
+    save_moods_to_csv(mood_list)
+
 if __name__ == '__main__':
-    mp3_path = input("Enter your MP3 filepath: ")
+    mp3_path = input("Enter your MP3 filepath: ").strip()
     countdown()
     run_real_time_processing(mp3_path)
