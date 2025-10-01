@@ -61,7 +61,7 @@ def audio_source_from_mp3(file_path):
         yield chunk.astype(np.float32)
         pos += HOP_SIZE
 
-def run_real_time_processing_with_list(mp3_filepath):
+def run_real_time_processing(mp3_filepath):
     source = audio_source_from_mp3(mp3_filepath)
     start_time = time.time()
     
