@@ -1,6 +1,8 @@
 import os
-import numpy as np
+from pathlib import Path
+import time
 import librosa
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 import csv
 
@@ -12,6 +14,7 @@ from Rhythm_Detection_Week7 import extract_rhythm
 from Harmony_detection_Week7 import extract_harmony
 from KNN_Week7 import preprocess_features, predict_mood
 
+# Constants
 SR = 44100
 WINDOW_SEC = 5.0
 HOP_SEC = 2.5
@@ -19,8 +22,8 @@ WINDOW_SIZE = int(WINDOW_SEC * SR)
 HOP_SIZE = int(HOP_SEC * SR)
 
 def save_moods_to_csv(mood_list, filename):
-    with open(filename, mode='w', newline='') as f:
-        writer = csv.writer(f)
+    with open(filename, mode='w', newline='') as file:
+        writer = csv.writer(file)
         writer.writerow(['Chunk Start Time (s)', 'Mood'])
         for timestamp, mood in mood_list:
             writer.writerow([f'{timestamp:.2f}', mood])
@@ -47,13 +50,15 @@ def process_single_file(filepath):
 
         features = preprocess_features(mode, key, tempo, loudness, rhythm_index, harmony_class)
         mood = predict_mood(features)
+
         timestamp = pos / SR
         chunk_moods.append((timestamp, mood))
         pos += HOP_SIZE
 
-    csv_filename = os.path.splitext(os.path.basename(filepath))[0] + "_moods.csv"
+    csv_filename = Path(filepath).stem + "_moods.csv"
     save_moods_to_csv(chunk_moods, csv_filename)
     print(f"Saved moods to {csv_filename}")
+
     return chunk_moods
 
 def process_files_concurrently(filepaths, max_workers=4):
@@ -61,13 +66,29 @@ def process_files_concurrently(filepaths, max_workers=4):
         results = list(executor.map(process_single_file, filepaths))
     return results
 
-if __name__ == "__main__":
-    file_list = input("Enter comma-separated MP3 file paths: ").strip().split(',')
-    file_list = [f.strip() for f in file_list if f.strip()]
-    results = process_files_concurrently(file_list)
+def process_all_mp3s_in_demo_folder():
+    # Derive absolute folder path
+    current_dir = Path.cwd()
+    demo_folder = current_dir.parent / "Songs_For_Demo"  # Adjust to your relative path
     
-    for filepath, moods in zip(file_list, results):
+    if not demo_folder.exists():
+        print(f"Folder {demo_folder} does not exist.")
+        return
+    
+    mp3_files = list(demo_folder.glob("*.mp3"))
+    if not mp3_files:
+        print(f"No MP3 files found in {demo_folder}")
+        return
+    
+    print(f"Processing {len(mp3_files)} mp3 files in {demo_folder}")
+    filepaths = [str(f) for f in mp3_files]
+    results = process_files_concurrently(filepaths)
+    
+    for filepath, moods in zip(filepaths, results):
         print(f"\nResults for {filepath}:")
         for ts, mood in moods:
             print(f"{ts:.2f}s - Mood: {mood}")
         print()
+
+if __name__ == "__main__":
+    process_all_mp3s_in_demo_folder()
