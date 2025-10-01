@@ -1,7 +1,7 @@
 import time
 import numpy as np
-import librosa
 import os
+import librosa
 
 from mood_color_map import mood_color_map
 from Buffer_Manager_Week7 import AudioBuffer
@@ -27,31 +27,32 @@ def reset_ansi():
     return "\033[0m"
 
 def clear_screen():
-    os.system('cls' if os.name == 'nt' else 'clear')
+    if os.name == 'nt':
+        os.system('cls')
+    else:
+        os.system('clear')
 
 def print_color_block(rgb, lines=20, width=80):
     bg_code = rgb_to_ansi_bg(*rgb)
     reset_code = reset_ansi()
     clear_screen()
-    # Print a block of color
     for _ in range(lines):
         print(f"{bg_code}{' ' * width}{reset_code}")
 
 def print_mood_info(mood, rgb):
-    r, g, b = rgb
-    print(f"Mood: {mood:<12s} RGB: ({r:3d}, {g:3d}, {b:3d})")
+    print(f"Mood: {mood:<12s} RGB: {rgb}")
 
 def countdown():
-    for i in [1, 2, 3]:
+    for i in range(1, 4):
         clear_screen()
-        print(f"{i}")
+        print(i)
         time.sleep(1)
     clear_screen()
     print("Start playing your song NOW!")
 
 def audio_source_from_mp3(file_path):
     y, sr = librosa.load(file_path, sr=SR, mono=True)
-    print(f"Loaded {file_path} ({len(y)/sr:.2f} seconds of audio)")
+    print(f"Loaded {file_path} ({len(y)/sr:.2f} seconds)")
     pos = 0
     while pos < len(y):
         chunk = y[pos:pos + HOP_SIZE]
@@ -60,10 +61,9 @@ def audio_source_from_mp3(file_path):
         yield chunk.astype(np.float32)
         pos += HOP_SIZE
 
-def run_real_time_processing(mp3_path):
-    source = audio_source_from_mp3(mp3_path)
+def run_real_time_processing(mp3_filepath):
+    source = audio_source_from_mp3(mp3_filepath)
     start_time = time.time()
-    
     for chunk in source:
         buffer.update(chunk)
         audio_win = buffer.get_window()
@@ -82,5 +82,10 @@ def run_real_time_processing(mp3_path):
         print_mood_info(mood, color)
 
         elapsed = time.time() - start_time
-        remaining = max(0, (len(buffer.buffer) / SR) - elapsed)
-        time
+        remaining = max(0, (len(buffer.buffer) / SR) - elapsed)  # example use
+        time.sleep(HOP_SEC)
+
+if __name__ == '__main__':
+    mp3_path = input("Enter your MP3 filepath: ")
+    countdown()
+    run_real_time_processing(mp3_path)
