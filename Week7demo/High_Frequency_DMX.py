@@ -2,15 +2,34 @@
 High Frequency DMX Controller
 
 This script drives DMX lights in a "high energy mode" (fast strobe, 
-rapid hue cycling, high brightness). The user selects a music genre,
-and the lights change according to pre-defined color palettes.
+rapid hue cycling, high brightness) based on real-time mood and energy data.
 """
 
 import time
 import random
 from pyserial import SimpleDMX
+import serial
 
 # Utility Functions
+
+def rgb_to_rgbw(rgb_color, brightness=1.0):
+    """
+    Convert RGB color tuple to RGBW tuple.
+
+    Args:
+        rgb_color (tuple): RGB tuple like (255, 0, 0).
+        brightness (float): Brightness scaling factor (0.0–1.0).
+    Returns:
+        (R, G, B, W) as integers in range 0–255.
+    """
+    r, g, b = rgb_color
+    w = min(r, g, b)  # crude white channel
+    return (
+        int(r * brightness),
+        int(g * brightness),
+        int(b * brightness),
+        int(w * brightness),
+    )
 
 def hex_to_rgbw(hex_code, brightness=1.0):
     """
@@ -32,39 +51,126 @@ def hex_to_rgbw(hex_code, brightness=1.0):
         int(w * brightness),
     )
 
-def rotate_palette(palette):
-    """
-    Rotate colors in the palette to add variation.
-    """
-    return palette[1:] + palette[:1]
+def energy_to_brightness(energy_level):
+    """Map energy level to brightness."""
+    energy_map = {
+        "high": 1.0,
+        "medium": 0.8,
+        "low": 0.6
+    }
+    return energy_map.get(energy_level, 0.7)
 
-def shuffle_palette(palette):
-    """
-    Shuffle palette for randomness.
-    """
-    shuffled = palette[:]
-    random.shuffle(shuffled)
-    return shuffled
+def energy_to_strobe_speed(energy_level):
+    """Map energy level to strobe speed (seconds between flashes)."""
+    speed_map = {
+        "high": 0.05,    # Very fast strobe
+        "medium": 0.1,   # Medium strobe
+        "low": 0.2       # Slower strobe
+    }
+    return speed_map.get(energy_level, 0.1)
 
-def brightness_from_loudness(loudness_db):
-    """
-    Map loudness (dB) to brightness.
-    """
-    if loudness_db > -15:
-        return 1.0
-    elif loudness_db > -25:
-        return 0.8
-    else:
-        return 0.6
+def energy_to_variation_count(energy_level):
+    """Map energy level to number of color variations."""
+    variation_map = {
+        "high": 8,       # Many variations
+        "medium": 5,     # Medium variations
+        "low": 3         # Few variations
+    }
+    return variation_map.get(energy_level, 5)
 
-# Main DMX Runner
+def create_color_variations(base_color, count=5):
+    """
+    Create variations of a base color for dynamic lighting.
+    
+    Args:
+        base_color (tuple): RGB base color
+        count (int): Number of variations to create
+    
+    Returns:
+        List of RGB color tuples
+    """
+    variations = [base_color]  # Start with original
+    r, g, b = base_color
+    
+    for i in range(count - 1):
+        # Create variations by adjusting brightness and hue
+        factor = 0.7 + (i * 0.1)  # Brightness factor
+        
+        # Add some randomness while keeping color character
+        r_var = min(255, max(0, int(r * factor + random.randint(-20, 20))))
+        g_var = min(255, max(0, int(g * factor + random.randint(-20, 20))))
+        b_var = min(255, max(0, int(b * factor + random.randint(-20, 20))))
+        
+        variations.append((r_var, g_var, b_var))
+    
+    return variations
+
+# Main DMX Functions
+
+def run_high_frequency_dmx_chunk(mood_color, energy_level, port="COM14", duration=5.0):
+    """
+    Run DMX lights for a single chunk (5 seconds) in High Frequency mode.
+    
+    Args:
+        mood_color (tuple): RGB color tuple for the mood
+        energy_level (str): Energy level ("high", "medium", "low")
+        port (str): DMX serial port
+        duration (float): Duration to run lights (seconds)
+    """
+    try:
+        # Initialize DMX
+        dmx = SimpleDMX(port=port, num_channels=8)
+        if not dmx.ser:
+            print(f"Warning: DMX controller not initialized on {port}")
+            return
+        
+        dmx.start_broadcast()
+        
+        # Get parameters based on energy level
+        brightness = energy_to_brightness(energy_level)
+        strobe_speed = energy_to_strobe_speed(energy_level)
+        variation_count = energy_to_variation_count(energy_level)
+        
+        # Create color variations
+        color_variations = create_color_variations(mood_color, variation_count)
+        
+        print(f"High-freq DMX: Color {mood_color}, Energy {energy_level}, Brightness {brightness:.2f}")
+        
+        start_time = time.time()
+        color_index = 0
+        
+        while time.time() - start_time < duration:
+            # Get current color variation
+            current_color = color_variations[color_index % len(color_variations)]
+            rgbw = rgb_to_rgbw(current_color, brightness)
+            
+            # Send to DMX
+            if dmx.ser and dmx.ser.is_open:
+                try:
+                    dmx.update_lighting(rgbw, hue_speed=1.0)
+                except serial.SerialTimeoutException:
+                    print("DMX write timeout, skipping frame")
+                except Exception as e:
+                    print(f"DMX write error: {e}")
+            
+            # Wait for strobe interval
+            time.sleep(strobe_speed)
+            
+            # Move to next color variation
+            color_index += 1
+        
+        dmx.close()
+        
+    except Exception as e:
+        print(f"High frequency DMX error: {e}")
 
 def run_high_frequency_dmx(loudness_db, genre, port="COM14"):
     """
+    Legacy function for standalone operation (kept for compatibility).
     Run DMX lights in High Frequency mode (fast strobe).
     """
 
-    # Genre → Palette mapping
+    # Genre → Palette mapping (legacy)
     genre_palettes = {
         "Blues": ["#0000FF", "#CECECE", "#CC6CE7", "#00FFFF", "#000000"],
         "Classical": ["#FFFFFF", "#0000FF", "#00FF00", "#CECECE", "#FFDE59"],
@@ -102,7 +208,14 @@ def run_high_frequency_dmx(loudness_db, genre, port="COM14"):
     print("DMX broadcast started.")
 
     try:
-        brightness = brightness_from_loudness(loudness_db)
+        # Map loudness to brightness
+        if loudness_db > -15:
+            brightness = 1.0
+        elif loudness_db > -25:
+            brightness = 0.8
+        else:
+            brightness = 0.6
+            
         print(f"Loudness: {loudness_db:.2f} dB → Brightness: {brightness:.2f}")
 
         # Infinite loop until user stops
@@ -110,9 +223,9 @@ def run_high_frequency_dmx(loudness_db, genre, port="COM14"):
         while True:
             # Rotate or shuffle every few cycles
             if step % 5 == 0:
-                palette = rotate_palette(palette)
+                palette = palette[1:] + palette[:1]  # rotate
             if step % 10 == 0:
-                palette = shuffle_palette(palette)
+                random.shuffle(palette)
 
             for hex_val in palette:
                 rgbw = hex_to_rgbw(hex_val, brightness=brightness)
@@ -132,4 +245,25 @@ def run_high_frequency_dmx(loudness_db, genre, port="COM14"):
         dmx.close()
         print("DMX connection closed.")
 
+# Test function
+def test_high_frequency_dmx():
+    """Test the high frequency DMX controller."""
+    print("Testing High Frequency DMX Controller...")
+    
+    test_colors = [
+        ((255, 0, 0), "high"),    # Red, high energy
+        ((0, 255, 0), "medium"),  # Green, medium energy
+        ((0, 0, 255), "low"),     # Blue, low energy
+        ((255, 255, 0), "high"),  # Yellow, high energy
+    ]
+    
+    for color, energy in test_colors:
+        print(f"\nTesting: Color {color}, Energy {energy}")
+        run_high_frequency_dmx_chunk(color, energy, duration=2.0)
+        time.sleep(0.5)
+    
+    print("Test complete!")
 
+if __name__ == "__main__":
+    # Run test
+    test_high_frequency_dmx()
