@@ -61,9 +61,12 @@ def audio_source_from_mp3(file_path):
         yield chunk.astype(np.float32)
         pos += HOP_SIZE
 
-def run_real_time_processing(mp3_filepath):
+def run_real_time_processing_with_list(mp3_filepath):
     source = audio_source_from_mp3(mp3_filepath)
     start_time = time.time()
+    
+    mood_list = []  # To store moods per chunk
+
     for chunk in source:
         buffer.update(chunk)
         audio_win = buffer.get_window()
@@ -77,13 +80,22 @@ def run_real_time_processing(mp3_filepath):
         features = preprocess_features(mode, key, tempo, loudness, rhythm_index, harmony_class)
         mood = predict_mood(features)
 
+        mood_list.append(mood)
+
         color = mood_color_map.get(mood, (255, 255, 255))
         print_color_block(color)
         print_mood_info(mood, color)
 
         elapsed = time.time() - start_time
-        remaining = max(0, (len(buffer.buffer) / SR) - elapsed)  # example use
+        remaining = max(0, (len(buffer.buffer) / SR) - elapsed)
         time.sleep(HOP_SEC)
+
+    # After processing is complete, print mood list with colors
+    clear_screen()
+    print("Mood list for the entire audio:")
+    for idx, mood in enumerate(mood_list, 1):
+        color = mood_color_map.get(mood)
+        print(f"Chunk {idx}: Mood = {mood}, Color = {color}")
 
 if __name__ == '__main__':
     mp3_path = input("Enter your MP3 filepath: ")
