@@ -2,6 +2,7 @@ import os
 import numpy as np
 import librosa
 from concurrent.futures import ThreadPoolExecutor
+import csv
 
 from Buffer_Manager_Week7 import AudioBuffer
 from Mode_Extraction_Week7 import detect_mode_key
@@ -17,12 +18,19 @@ HOP_SEC = 2.5
 WINDOW_SIZE = int(WINDOW_SEC * SR)
 HOP_SIZE = int(HOP_SEC * SR)
 
+def save_moods_to_csv(mood_list, filename):
+    with open(filename, mode='w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Chunk Start Time (s)', 'Mood'])
+        for timestamp, mood in mood_list:
+            writer.writerow([f'{timestamp:.2f}', mood])
+
 def process_single_file(filepath):
     print(f"Processing {filepath}...")
     y, sr = librosa.load(filepath, sr=SR, mono=True)
     buffer = AudioBuffer(WINDOW_SIZE)
     chunk_moods = []
-    
+
     pos = 0
     while pos < len(y):
         chunk = y[pos:pos + HOP_SIZE]
@@ -39,15 +47,13 @@ def process_single_file(filepath):
 
         features = preprocess_features(mode, key, tempo, loudness, rhythm_index, harmony_class)
         mood = predict_mood(features)
-
         timestamp = pos / SR
         chunk_moods.append((timestamp, mood))
         pos += HOP_SIZE
-    
-    print(f"Finished {filepath}. Moods and timestamps:")
-    for ts, mood in chunk_moods:
-        print(f"{ts:.2f}s: {mood}")
-    
+
+    csv_filename = os.path.splitext(os.path.basename(filepath))[0] + "_moods.csv"
+    save_moods_to_csv(chunk_moods, csv_filename)
+    print(f"Saved moods to {csv_filename}")
     return chunk_moods
 
 def process_files_concurrently(filepaths, max_workers=4):
@@ -55,17 +61,13 @@ def process_files_concurrently(filepaths, max_workers=4):
         results = list(executor.map(process_single_file, filepaths))
     return results
 
-if __name__ == '__main__':
-    # Example usage, replace with your actual MP3 paths
-    file_list = [
-        "scom.mp3",
-        "creep.mp3",
-        # add more Mp3 file paths here
-    ]
+if __name__ == "__main__":
+    file_list = input("Enter comma-separated MP3 file paths: ").strip().split(',')
+    file_list = [f.strip() for f in file_list if f.strip()]
     results = process_files_concurrently(file_list)
-
-    for file, moods in zip(file_list, results):
-        print(f"\nResults for {file}:")
+    
+    for filepath, moods in zip(file_list, results):
+        print(f"\nResults for {filepath}:")
         for ts, mood in moods:
-            print(f"{ts:.2f} s - Mood: {mood}")
+            print(f"{ts:.2f}s - Mood: {mood}")
         print()
