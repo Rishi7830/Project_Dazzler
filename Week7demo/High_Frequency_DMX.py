@@ -8,7 +8,8 @@ rapid hue cycling, high brightness) based on real-time mood and energy data.
 import time
 import random
 import serial
-from serial import SimpleDMX
+import pyserial
+from pyserial import SimpleDMX
 
 
 # Utility Functions
@@ -268,5 +269,6 @@ def test_high_frequency_dmx():
 if __name__ == "__main__":
     # Run test
     test_high_frequency_dmx()
+
 
 
