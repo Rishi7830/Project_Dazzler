@@ -1,6 +1,8 @@
 import time
 import numpy as np
 import librosa
+import os
+
 from mood_color_map import mood_color_map
 from Buffer_Manager_Week7 import AudioBuffer
 from Mode_Extraction_Week7 import detect_mode_key
@@ -18,97 +20,67 @@ HOP_SIZE = int(HOP_SEC * SR)
 
 buffer = AudioBuffer(WINDOW_SIZE)
 
-def set_terminal_color_bg(r, g, b):
-    """Sets ANSI background color in terminal"""
-    print(f'\x1b[48;2;{r};{g};{b}m', end='')
+def rgb_to_ansi_bg(r, g, b):
+    return f"\033[48;2;{r};{g};{b}m"
 
-def reset_terminal():
-    """Resets terminal color/style"""
-    print('\x1b[0m', end='')
+def reset_ansi():
+    return "\033[0m"
 
-def print_mood_with_countdown(mood, rgb, remaining_time):
-    """Display mood, color, and countdown timer"""
+def clear_screen():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+def print_color_block(rgb, lines=20, width=80):
+    bg_code = rgb_to_ansi_bg(*rgb)
+    reset_code = reset_ansi()
+    clear_screen()
+    # Print a block of color
+    for _ in range(lines):
+        print(f"{bg_code}{' ' * width}{reset_code}")
+
+def print_mood_info(mood, rgb):
     r, g, b = rgb
-    color_hex = f'#{r:02x}{g:02x}{b:02x}'
-    mins, secs = divmod(int(remaining_time), 60)
-    timer_display = f'{mins:02d}:{secs:02d}'
-    
-    # Clear line and print info with countdown
-    print(f'\rMood: {mood:<12s} | RGB: ({r:3d}, {g:3d}, {b:3d}) | Hex: {color_hex} | Time: {timer_display}', end='', flush=True)
-    
-    # Optional: color bar
-    set_terminal_color_bg(r, g, b)
-    print('  ', end='')
-    reset_terminal()
+    print(f"Mood: {mood:<12s} RGB: ({r:3d}, {g:3d}, {b:3d})")
 
-def load_mp3_audio(filepath, sr=SR):
-    """Load MP3 file using librosa"""
-    try:
-        audio, _ = librosa.load(filepath, sr=sr)
-        return audio
-    except Exception as e:
-        print(f"Error loading MP3 file: {e}")
-        return None
+def countdown():
+    for i in [1, 2, 3]:
+        clear_screen()
+        print(f"{i}")
+        time.sleep(1)
+    clear_screen()
+    print("Start playing your song NOW!")
 
-def audio_chunks_from_file(audio_data, hop_size):
-    """Generator that yields audio chunks from loaded file"""
-    total_samples = len(audio_data)
-    position = 0
-    
-    while position + hop_size <= total_samples:
-        yield audio_data[position:position + hop_size]
-        position += hop_size
+def audio_source_from_mp3(file_path):
+    y, sr = librosa.load(file_path, sr=SR, mono=True)
+    print(f"Loaded {file_path} ({len(y)/sr:.2f} seconds of audio)")
+    pos = 0
+    while pos < len(y):
+        chunk = y[pos:pos + HOP_SIZE]
+        if len(chunk) < HOP_SIZE:
+            chunk = np.pad(chunk, (0, HOP_SIZE - len(chunk)), 'constant')
+        yield chunk.astype(np.float32)
+        pos += HOP_SIZE
 
-def run_real_time_processing(mp3_filepath):
-    """Process MP3 file with mood detection and countdown"""
-    print(f"Loading MP3 file: {mp3_filepath}")
-    audio_data = load_mp3_audio(mp3_filepath)
-    
-    if audio_data is None:
-        print("Failed to load audio file. Exiting.")
-        return
-    
-    total_duration = len(audio_data) / SR
-    print(f"Audio loaded successfully. Duration: {total_duration:.2f} seconds\n")
-    
+def run_real_time_processing(mp3_path):
+    source = audio_source_from_mp3(mp3_path)
     start_time = time.time()
     
-    try:
-        for chunk in audio_chunks_from_file(audio_data, HOP_SIZE):
-            buffer.update(chunk)
-            audio_window = buffer.get_window()
+    for chunk in source:
+        buffer.update(chunk)
+        audio_win = buffer.get_window()
 
-            # Extract features
-            mode, key = detect_mode_key(audio_window)
-            tempo = detect_tempo(audio_window)
-            loudness = detect_loudness(audio_window)
-            bpm, rhythm_index = extract_rhythm(audio_window)
-            _, _, _, _, harmony_class = extract_harmony(audio_window)
+        mode, key = detect_mode_key(audio_win)
+        tempo = detect_tempo(audio_win)
+        loudness = detect_loudness(audio_win)
+        bpm, rhythm_index = extract_rhythm(audio_win)
+        _, _, _, _, harmony_class = extract_harmony(audio_win)
 
-            # Predict mood
-            features = preprocess_features(mode, key, tempo, loudness, rhythm_index, harmony_class)
-            mood = predict_mood(features)
-            color = mood_color_map.get(mood, (255, 255, 255))
+        features = preprocess_features(mode, key, tempo, loudness, rhythm_index, harmony_class)
+        mood = predict_mood(features)
 
-            # Calculate remaining time
-            elapsed = time.time() - start_time
-            remaining = max(0, total_duration - elapsed)
-            
-            print_mood_with_countdown(mood, color, remaining)
-            
-            # Sleep to maintain real-time playback sync
-            time.sleep(HOP_SEC)
-            
-            if remaining <= 0:
-                break
-                
-        print("\n\n✓ Processing complete!")
-        
-    except KeyboardInterrupt:
-        reset_terminal()
-        print("\n\n⏸ Processing interrupted.")
+        color = mood_color_map.get(mood, (255, 255, 255))
+        print_color_block(color)
+        print_mood_info(mood, color)
 
-if __name__ == '__main__':
-    # Replace with your MP3 file path
-    mp3_file = input("Enter MP3 file path: ").strip()
-    run_real_time_processing(mp3_file)
+        elapsed = time.time() - start_time
+        remaining = max(0, (len(buffer.buffer) / SR) - elapsed)
+        time
