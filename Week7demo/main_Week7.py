@@ -58,8 +58,8 @@ def process_files_concurrently(filepaths, max_workers=4):
 if __name__ == '__main__':
     # Example usage, replace with your actual MP3 paths
     file_list = [
-        "path/to/song1.mp3",
-        "path/to/song2.mp3",
+        "scom.mp3",
+        "creep.mp3",
         # add more Mp3 file paths here
     ]
     results = process_files_concurrently(file_list)
