@@ -164,7 +164,7 @@ def run_high_frequency_dmx_chunk(mood_color, energy_level, port="/dev/ttyUSB0", 
     except Exception as e:
         print(f"High frequency DMX error: {e}")
 
-def run_high_frequency_dmx(loudness_db, genre, port="COM14"):
+def run_high_frequency_dmx(loudness_db, genre, port="COM4"):
     """
     Legacy function for standalone operation (kept for compatibility).
     Run DMX lights in High Frequency mode (fast strobe).
@@ -267,6 +267,7 @@ def test_high_frequency_dmx():
 if __name__ == "__main__":
     # Run test
     test_high_frequency_dmx()
+
 
 
 
