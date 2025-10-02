@@ -107,7 +107,7 @@ def create_color_variations(base_color, count=5):
 
 # Main DMX Functions
 
-def run_high_frequency_dmx_chunk(mood_color, energy_level, port="COM14", duration=5.0):
+def run_high_frequency_dmx_chunk(mood_color, energy_level, port="/dev/ttyUSB0", duration=5.0):
     """
     Run DMX lights for a single chunk (5 seconds) in High Frequency mode.
     
@@ -267,6 +267,7 @@ def test_high_frequency_dmx():
 if __name__ == "__main__":
     # Run test
     test_high_frequency_dmx()
+
 
 
 
