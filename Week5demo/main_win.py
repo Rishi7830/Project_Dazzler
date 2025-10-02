@@ -177,7 +177,7 @@ def stream_mp3_realtime(
 
 
 if __name__ == "__main__":
-    mp3_file = Path(__file__).with_name("scom.mp3")
+    mp3_file = Path(__file__).with_name("Love Will Keep Us Alive (1999 Remaster).mp3")
     dmx = init_dmx_controller(port=None, num_channels=8)
     stream_mp3_realtime(
         mp3_path=str(mp3_file),
