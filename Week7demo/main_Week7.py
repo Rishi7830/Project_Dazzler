@@ -6,6 +6,8 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 import csv
 import threading
+import queue
+
 from Buffer_Manager_Week7 import AudioBuffer
 from Mode_Extraction_Week7 import detect_mode_key
 from Tempo_detection_week7 import detect_tempo
@@ -24,20 +26,19 @@ HOP_SEC = 2.5
 WINDOW_SIZE = int(WINDOW_SEC * SR)
 HOP_SIZE = int(HOP_SEC * SR)
 
-# Global variables for DMX control
-dmx_controller = None
-lighting_active = False
+# Loudness thresholds (tune these values to your audio)
+LOUDNESS_HIGH_THRESHOLD = -20   # dB, switch to high frequency above this
+LOUDNESS_LOW_THRESHOLD = -40    # dB, switch to low frequency below this
 
 def get_user_inputs():
     """Get user inputs for genre and song file."""
     print("=== Music-to-Light System ===")
     print("\nAvailable genres:")
     genres = [
-        "classical", "rock", "blues", "hip hop and rap", "soul", 
-        "indie", "country", "gospel", "jazz", "folk", 
-        "electronics and dance", "latin", "metal", "pop", "reggae"
+        "classical", "rock", "blues", "hip hop and rap", "soul", "indie",
+        "country", "gospel", "jazz", "folk", "electronics and dance",
+        "latin", "metal", "pop", "reggae"
     ]
-    
     for i, genre in enumerate(genres, 1):
         print(f"{i}. {genre}")
     
@@ -61,26 +62,10 @@ def get_user_inputs():
         else:
             print("File not found. Please enter a valid path.")
     
-    # Get lighting mode
-    print("\nLighting modes:")
-    print("1. High Frequency (fast strobe, high energy)")
-    print("2. Low Frequency (smooth fades, relaxed)")
-    
-    while True:
-        try:
-            mode_choice = int(input("Select lighting mode (1-2): "))
-            if mode_choice in [1, 2]:
-                lighting_mode = "high" if mode_choice == 1 else "low"
-                break
-            else:
-                print("Invalid choice. Please select 1 or 2.")
-        except ValueError:
-            print("Please enter a valid number.")
-    
     # Get DMX port
     dmx_port = input("\nEnter DMX port (default: COM14): ").strip() or "COM14"
     
-    return selected_genre, filepath, lighting_mode, dmx_port
+    return selected_genre, filepath, dmx_port
 
 def save_moods_to_csv(mood_list, filename):
     """Save mood analysis results to CSV."""
@@ -93,7 +78,6 @@ def save_moods_to_csv(mood_list, filename):
 
 def process_audio_chunk(chunk, buffer, genre):
     """Process a single audio chunk and return mood, color, and energy data."""
-    # Update buffer
     buffer.update(chunk)
     windowed_audio = buffer.get_window()
     
@@ -119,58 +103,57 @@ def process_audio_chunk(chunk, buffer, genre):
     
     return mood, mood_color, loudness, energy_level
 
-def lighting_controller_thread(lighting_mode, genre, dmx_port, mood_queue):
-    """Thread function to control DMX lighting based on mood data."""
-    global dmx_controller, lighting_active
-    
+def lighting_controller_thread(genre, dmx_port, mood_queue):
+    """Thread function to control DMX lighting using loudness-based mode switching."""
+    lighting_active = True
     try:
-        lighting_active = True
-        print(f"Starting {lighting_mode} frequency lighting controller...")
-        
+        print("\nStarting adaptive lighting controller (loudness-based mode switching)...")
         while lighting_active:
             if not mood_queue.empty():
-                # Get latest mood data
-                mood_data = mood_queue.get()
-                mood, color, loudness, energy = mood_data
+                mood, color, loudness, energy = mood_queue.get()
                 
-                print(f"Lighting: {mood} -> {color} (Energy: {energy})")
-                
-                # Trigger appropriate lighting mode
-                if lighting_mode == "high":
+                # Choose lighting mode by loudness
+                if loudness >= LOUDNESS_HIGH_THRESHOLD:
+                    # High frequency strobe
+                    print(f"Loudness {loudness:.2f} >= {LOUDNESS_HIGH_THRESHOLD}: high frequency/strobe")
                     run_high_frequency_dmx_chunk(color, energy, dmx_port, duration=5.0)
+                elif loudness <= LOUDNESS_LOW_THRESHOLD:
+                    # Low frequency smooth
+                    print(f"Loudness {loudness:.2f} <= {LOUDNESS_LOW_THRESHOLD}: low frequency/fade")
+                    run_low_frequency_dmx_chunk(color, energy, dmx_port, duration=5.0)
                 else:
+                    # Between thresholds, default to low frequency
+                    print(f"Loudness {loudness:.2f}: using low frequency mode")
                     run_low_frequency_dmx_chunk(color, energy, dmx_port, duration=5.0)
             
-            time.sleep(0.1)  # Small delay to prevent excessive CPU usage
-            
+            time.sleep(0.1)
     except Exception as e:
         print(f"Lighting controller error: {e}")
     finally:
         lighting_active = False
 
-def process_single_file(filepath, genre, lighting_mode, dmx_port):
-    """Process audio file with real-time lighting control."""
-    print(f"Processing {filepath}...")
+def process_single_file(filepath, genre, dmx_port):
+    """Process audio file with real-time lighting control and loudness-based mode selection."""
+    print(f"\nProcessing {filepath}...")
     print(f"Genre: {genre}")
-    print(f"Lighting mode: {lighting_mode}")
     
-    # Load audio
+    # Load audio and print duration for debugging
     y, sr = librosa.load(filepath, sr=SR, mono=True)
+    print(f"Loaded audio file. Duration: {len(y)/sr:.2f} seconds")
+    
+    if len(y) == 0:
+        print("ERROR: Audio file is empty or could not be loaded.")
+        return []
     
     # Initialize buffer
     buffer = AudioBuffer(WINDOW_SIZE)
-    
-    # Initialize data storage
     chunk_moods = []
-    
-    # Initialize mood queue for lighting thread
-    import queue
     mood_queue = queue.Queue(maxsize=10)
     
     # Start lighting controller thread
     lighting_thread = threading.Thread(
         target=lighting_controller_thread,
-        args=(lighting_mode, genre, dmx_port, mood_queue)
+        args=(genre, dmx_port, mood_queue)
     )
     lighting_thread.daemon = True
     lighting_thread.start()
@@ -180,7 +163,7 @@ def process_single_file(filepath, genre, lighting_mode, dmx_port):
         chunk_count = 0
         
         print("\nStarting real-time analysis and lighting...")
-        print("Press Ctrl+C to stop.")
+        print("Press Ctrl+C to stop.\n")
         
         while pos < len(y):
             start_time = time.time()
@@ -190,11 +173,9 @@ def process_single_file(filepath, genre, lighting_mode, dmx_port):
             if len(chunk) < HOP_SIZE:
                 chunk = np.pad(chunk, (0, HOP_SIZE - len(chunk)), 'constant')
             
-            # Process chunk
+            # Process chunk and get mood/color
             mood, mood_color, loudness, energy_level = process_audio_chunk(chunk, buffer, genre)
-            
-            # Store results
-            timestamp = pos / SR
+            timestamp = pos / sr
             chunk_moods.append((timestamp, mood, mood_color, loudness, energy_level))
             
             # Send to lighting controller
@@ -209,7 +190,7 @@ def process_single_file(filepath, genre, lighting_mode, dmx_port):
             pos += HOP_SIZE
             chunk_count += 1
             
-            # Maintain real-time processing (wait for chunk duration)
+            # Maintain real-time processing
             elapsed = time.time() - start_time
             sleep_time = HOP_SEC - elapsed
             if sleep_time > 0:
@@ -219,7 +200,6 @@ def process_single_file(filepath, genre, lighting_mode, dmx_port):
         print("\nStopping analysis...")
     finally:
         # Stop lighting controller
-        global lighting_active
         lighting_active = False
         lighting_thread.join(timeout=2)
         
@@ -236,28 +216,26 @@ def main():
     """Main execution function."""
     try:
         # Get user inputs
-        genre, filepath, lighting_mode, dmx_port = get_user_inputs()
+        genre, filepath, dmx_port = get_user_inputs()
         
         print(f"\nConfiguration:")
         print(f"Genre: {genre}")
         print(f"Audio file: {filepath}")
-        print(f"Lighting mode: {lighting_mode}")
         print(f"DMX port: {dmx_port}")
         print(f"Processing window: {WINDOW_SEC}s")
         print(f"Hop size: {HOP_SEC}s")
+        print(f"Loudness thresholds: High > {LOUDNESS_HIGH_THRESHOLD}dB, Low < {LOUDNESS_LOW_THRESHOLD}dB")
         
         input("\nPress Enter to start...")
         
         # Process the file
-        results = process_single_file(filepath, genre, lighting_mode, dmx_port)
+        results = process_single_file(filepath, genre, dmx_port)
         
         print("\n=== Analysis Complete ===")
         if results:
             moods = [mood for _, mood, _, _, _ in results]
             unique_moods = list(set(moods))
             print(f"Detected moods: {', '.join(unique_moods)}")
-            
-            # Summary statistics
             mood_counts = {mood: moods.count(mood) for mood in unique_moods}
             dominant_mood = max(mood_counts.items(), key=lambda x: x[1])
             print(f"Dominant mood: {dominant_mood[0]} ({dominant_mood[1]} chunks)")
