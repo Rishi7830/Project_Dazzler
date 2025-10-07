@@ -17,8 +17,9 @@ from audio_analyzer import process_audio_features
 from color_mapper import map_to_colors
 
 try:
-    from pyserial import SimpleDMX
-except Exception:
+    from SimpleDMX import SimpleDMX
+except Exception as e:
+    print(f"[WARN] Could not import SimpleDMX: {e}") #added this line
     SimpleDMX = None
 
 
@@ -178,7 +179,7 @@ def stream_mp3_realtime(
 
 if __name__ == "__main__":
     mp3_file = Path(__file__).with_name("Love Will Keep Us Alive (1999 Remaster).mp3")
-    dmx = init_dmx_controller(port=None, num_channels=8)
+    dmx = init_dmx_controller(port="/dev/ttyUSB0", num_channels=8) #changed from None to the USB0
     stream_mp3_realtime(
         mp3_path=str(mp3_file),
         dmx=dmx,
