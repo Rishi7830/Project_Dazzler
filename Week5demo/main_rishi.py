@@ -1,4 +1,3 @@
-```python
 """
 Realtime MP3 → Feature Analysis + DMX output (no audio playback for WSL)
 Requires ffmpeg, local feature modules, and color_mapper.map_to_colors, pyserial
@@ -213,3 +212,4 @@ if __name__ == "__main__":
     except Exception:
         pass
 ```
+
