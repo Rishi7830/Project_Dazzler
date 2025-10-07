@@ -14,7 +14,7 @@ mood_weights = {
 
 mood_df = pd.DataFrame(mood_weights, index=["Mode", "Harmony", "Tempo", "Rhythm", "Loudness"])
 
-def preprocess_features(mode, key, tempo, loudness, rhythm_index, harmony_class):
+def preprocess_features(mode, tempo, loudness, rhythm_index, harmony_class):
     mode_scaled = 1 if mode == 'major' else -1
     harmony_scaled = 1 if harmony_class == 'Simple' else -1
     tempo_scaled = (tempo - 120) / 40
