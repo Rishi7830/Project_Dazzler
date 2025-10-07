@@ -17,7 +17,7 @@ from audio_analyzer import process_audio_features
 from color_mapper import map_to_colors
 
 try:
-    from SimpleDMX import SimpleDMX
+    from pyserial import SimpleDMX
 except Exception as e:
     print(f"[WARN] Could not import SimpleDMX: {e}") #added this line
     SimpleDMX = None
