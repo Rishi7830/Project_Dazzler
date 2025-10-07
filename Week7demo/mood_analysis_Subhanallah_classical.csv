@@ -1,0 +1,15 @@
+Chunk Start Time (s),Mood,Color (RGB),Loudness (dB),Energy Level
+0.00,Depression,"(128, 0, 0)",41.71,high
+2.50,Depression,"(128, 0, 0)",69.92,high
+5.00,Depression,"(128, 0, 0)",75.67,high
+7.50,Depression,"(128, 0, 0)",113.85,high
+10.00,Depression,"(128, 0, 0)",125.13,high
+12.50,Depression,"(128, 0, 0)",114.57,high
+15.00,Depression,"(128, 0, 0)",116.20,high
+17.50,Depression,"(128, 0, 0)",139.69,high
+20.00,Depression,"(128, 0, 0)",182.98,high
+22.50,Depression,"(128, 0, 0)",318.32,high
+25.00,Depression,"(128, 0, 0)",518.38,high
+27.50,Depression,"(128, 0, 0)",598.42,high
+30.00,Depression,"(128, 0, 0)",524.61,high
+32.50,Depression,"(128, 0, 0)",554.77,high
