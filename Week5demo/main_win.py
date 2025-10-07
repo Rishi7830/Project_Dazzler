@@ -25,7 +25,7 @@ except Exception:
 def _suggest_default_port() -> str:
     sysname = platform.system().lower()
     if sysname.startswith("win"):
-        return os.environ.get("DAZZLER_DMX_PORT", "COM4")
+        return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB0")
     if sysname == "darwin":
         return os.environ.get("DAZZLER_DMX_PORT", "/dev/tty.usbserial")
     return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB0")
