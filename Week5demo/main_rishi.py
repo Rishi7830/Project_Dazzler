@@ -211,5 +211,3 @@ if __name__ == "__main__":
         dmx.close()
     except Exception:
         pass
-```
-
