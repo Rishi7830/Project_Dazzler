@@ -6,7 +6,7 @@ from Buffer_Manager_Week7 import AudioBuffer
 from Loudness_detection_Week7 import detect_loudness
 
 # --- Set your parameters here ---
-AUDIO_PATH = "your_audio_file.mp3"  # change to your local file
+AUDIO_PATH = "../Songs_For_Demo/Subhanallah.mp3.mp3"  # change to your local file
 SR = 44100
 WINDOW_SEC = 5.0
 HOP_SEC = 2.5
