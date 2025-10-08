@@ -2,19 +2,19 @@ import essentia.standard as es
 import numpy as np
 
 def detect_loudness(audio_buffer):
-    print("Audio buffer min/max:", np.min(audio_buffer), np.max(audio_buffer)) #for debugging
     """
     Returns loudness in dB from an audio buffer.
     """
     loudness_extractor = es.Loudness()
     try:
         loudness = loudness_extractor(audio_buffer)
+        # Convert from Stevens' law (linear) to dB, safely handling zeros/negatives
+        if loudness > 0:
+            loudness_db = 10 * np.log10(loudness)
+        else:
+            loudness_db = -80.0  # Very quiet fallback
     except Exception:
-        loudness = -60.0  # Quiet fallback
-
-    print("Raw loudness:", loudness)
-    if np.isnan(loudness) or loudness > 0 or loudness < -80:
-        print("Anomalous loudness detected:", loudness)
-        loudness = -30
-
-    return loudness
+        loudness_db = -80.0  # Quiet fallback for any failure
+    # Optionally clip to sane dB range
+    loudness_db = np.clip(loudness_db, -80, 0)
+    return loudness_db
