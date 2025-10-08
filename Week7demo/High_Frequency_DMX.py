@@ -159,8 +159,6 @@ def run_high_frequency_dmx_chunk(mood_color, energy_level, port="/dev/ttyUSB0", 
             # Move to next color variation
             color_index += 1
         
-        dmx.close()
-        
     except Exception as e:
         print(f"High frequency DMX error: {e}")
 
