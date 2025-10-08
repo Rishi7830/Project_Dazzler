@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import essentia.standard as es
 
 # --- Set parameters ---
-AUDIO_PATH = "your_audio_file.mp3"  # <-- change this!
+AUDIO_PATH = "../Songs_For_demo/Subhanallah.mp3"  # <-- change this!
 SR = 44100
 WINDOW_SEC = 5.0
 HOP_SEC = 2.5
