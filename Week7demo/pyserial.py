@@ -113,6 +113,7 @@ class SimpleDMX:
             self.set_channel_internal(CH_DIMMER, 255)
             self.set_channel_internal(CH_STROBE, VAL_LED_START)  # constant on
 
+
         self.send_frame()
 
     def send_frame(self):
@@ -166,7 +167,7 @@ class SimpleDMX:
             print(f"Serial port {self.port} closed.")
 
 if __name__ == "__main__":
-    SERIAL_PORT = "/dev/ttyUSB1" #Changed from USB0
+    SERIAL_PORT = "/dev/ttyUSB0"
     dmx = SimpleDMX(port=SERIAL_PORT, strobe_interval=0.5)
 
     if not dmx.ser:
@@ -230,6 +231,7 @@ if __name__ == "__main__":
                             print("Invalid duration. Using default 5.0.")
                     dmx.update_lighting(color_rgbw, 0.0)
 
+
                 start_wait = time.time()
                 while time.time() - start_wait < duration:
                     time.sleep(0.03)
@@ -242,5 +244,7 @@ if __name__ == "__main__":
             print("\nExiting DMX test...")
         finally:
             dmx.close()
+
+
 
 
