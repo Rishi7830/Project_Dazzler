@@ -39,8 +39,7 @@ class _NoopDMX:
     def update_lighting(self, rgbw_tuple, hue_speed):
         print(f"[DMX] (noop) {rgbw_tuple} speed={hue_speed:.2f}")
 
-
-def init_dmx_controller(port: str | None = None, num_channels: int = 8):
+def init_dmx_controller(port: str | None = None, num_channels: int = 9): #changed to 9 channels
     if SimpleDMX is None:
         return _NoopDMX()
     port = port or _suggest_default_port()
@@ -179,7 +178,7 @@ def stream_mp3_realtime(
 
 if __name__ == "__main__":
     mp3_file = Path(__file__).with_name("Love Will Keep Us Alive (1999 Remaster).mp3")
-    dmx = init_dmx_controller(port="/dev/ttyUSB0", num_channels=8) #changed from None to the USB0
+    dmx = init_dmx_controller(port="/dev/ttyUSB0", num_channels=9) #changed from None to the USB0
     stream_mp3_realtime(
         mp3_path=str(mp3_file),
         dmx=dmx,

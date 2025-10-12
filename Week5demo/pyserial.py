@@ -2,19 +2,47 @@ import serial
 import time
 import threading
 
+# MH363 9-channel DMX map:
+# 1: Pan (0-255 -> 0°–630°)
+# 2: Tilt (0-255 -> 0°–220°)
+# 3: Strobe/Shutter (bands incl. off, strobe, fade pulses, lightning, full on)
+# 4: Red (0-255)
+# 5: Green (0-255)
+# 6: Blue (0-255)
+# 7: White (0-255)
+# 8: Master Dimmer (0-255)
+# 9: Sound Control (0-239 none, 240-255 sound active)
+
+CH_PAN   = 1
+CH_TILT  = 2
+CH_STROBE = 3
+CH_RED   = 4
+CH_GREEN = 5
+CH_BLUE  = 6
+CH_WHITE = 7
+CH_DIMMER = 8
+CH_SOUND = 9
+
+# Strobe channel value helpers (Channel 3)
+VAL_LED_OFF   = 0       # explicit off band start
+VAL_STROBE_FAST = 131   # in the "strobe slow->fast" band (~16–131), 131 is fast end
+VAL_FADE_FAST   = 181   # in the "fade slow->fast" band (~140–181), 181 is fast end
+VAL_LIGHTNING   = 244   # in the "lightning" band (~240–247)
+VAL_LED_START   = 255   # constant on
+
 class SimpleDMX:
-    def __init__(self, port: str, num_channels: int = 512, strobe_interval: float = 0.1): # Adjusted default strobe_interval
+    def __init__(self, port: str, strobe_interval: float = 0.1):
         self.port = port
-        self.num_channels = num_channels
-        self.data = [0] * num_channels # Current DMX channel values
+        # Enforce exactly 9 channels for this fixture mode
+        self.num_channels = 9
+        self.data = [0] * self.num_channels
         self.running = False
         self.strobe_on = False
         self.strobe_interval = strobe_interval
-        self.color_to_strobe = (0, 0, 0, 0) # The color to use when strobing
-        self.thread = None 
+        self.color_to_strobe = (0, 0, 0, 0)  # r,g,b,w
+        self.thread = None
 
         try:
-            # It's good practice to open the serial port *only* when needed or when starting broadcast
             self.ser = serial.Serial(
                 port,
                 baudrate=250000,
@@ -23,155 +51,121 @@ class SimpleDMX:
                 stopbits=serial.STOPBITS_TWO,
             )
             print(f"Serial port {self.port} opened successfully.")
+
+            # Initialize to safe/active defaults for 9CH mode
+            self.set_channel_internal(CH_PAN, 0)
+            self.set_channel_internal(CH_TILT, 0)
+            self.set_channel_internal(CH_STROBE, VAL_LED_START)  # constant light
+            self.set_channel_internal(CH_DIMMER, 255)            # full output
+            self.set_channel_internal(CH_SOUND, 0)               # sound off
+
         except serial.SerialException as e:
             print(f"Error: Could not open serial port {self.port}.")
             print(e)
-            self.ser = None # Set to None if port fails to open
+            self.ser = None
+
+    def set_channel_internal(self, ch: int, value: int):
+        if 1 <= ch <= self.num_channels:
+            self.data[ch - 1] = max(0, min(255, value))
 
     def set_channel(self, ch: int, value: int):
-        """Sets a single DMX channel value."""
-        if self.ser and 1 <= ch <= self.num_channels:
-            self.data[ch - 1] = max(0, min(255, value))
-        elif not self.ser:
+        if self.ser:
+            self.set_channel_internal(ch, value)
+        else:
             print("Serial port not available. Cannot set channel.")
 
     def clear_color_channels(self):
-        """Clears the first 4 channels (assuming RGBW)."""
         if self.ser:
-            for ch in range(1, 5):
-                self.set_channel(ch, 0)
+            for ch in range(CH_RED, CH_WHITE + 1):
+                self.set_channel_internal(ch, 0)
+            self.set_channel_internal(CH_DIMMER, 0)
+            self.set_channel_internal(CH_STROBE, VAL_LED_OFF)
 
     def set_channels_from_tuple(self, color_tuple):
-        """Sets the first 4 channels (RGBW) from a tuple."""
         if self.ser and len(color_tuple) >= 4:
-            r, g, b, w = color_tuple[:4] # Take first 4 values
-            self.set_channel(1, r)
-            self.set_channel(2, g)
-            self.set_channel(3, b)
-            self.set_channel(4, w)
+            r, g, b, w = color_tuple[:4]
+            self.set_channel_internal(CH_RED, r)
+            self.set_channel_internal(CH_GREEN, g)
+            self.set_channel_internal(CH_BLUE, b)
+            self.set_channel_internal(CH_WHITE, w)
         elif not self.ser:
             print("Serial port not available. Cannot set channels from tuple.")
 
     def update_lighting(self, color_tuple, hue_speed):
-        """
-        **THIS IS THE NEW METHOD you'll call from main.py**
-        Updates the DMX state based on the color and speed from audio analysis.
-        
-        Args:
-            color_tuple (tuple): An RGB(W) tuple like (r, g, b, w).
-            hue_speed (float): A value indicating the desired speed/frequency.
-                               We'll use this to determine if it's a strobe.
-        """
-        if not self.ser:
-            # print("Cannot update lighting: Serial port not available.")
-            return # Silently fail if serial port isn't open, main.py will handle errors
-
-        # Logic to decide between static color and strobe
-        # You can adjust the threshold (e.g., 0.2) for when to activate strobe
-        strobe_threshold = 0.2 
-        if hue_speed > strobe_threshold:
-            self.strobe_on = True
-            # Map hue_speed to an interval. Higher speed = shorter interval.
-            # This mapping is an example; you might need to tune it.
-            self.strobe_interval = max(0.05, 1.0 / (hue_speed * 10)) 
-            self.color_to_strobe = color_tuple
-            # When strobing, we set the color to be used, but the broadcast loop handles the on/off
-            # For immediate effect, we can set the channels here too, but the loop will override it.
-            # If you want the strobe to start *immediately*, you might want to send a frame here.
-            # However, the broadcast loop's timing is more consistent for continuous strobing.
-            self.set_channels_from_tuple(self.color_to_strobe) # Set the color to strobe
-        else:
-            self.strobe_on = False
-            self.set_channels_from_tuple(color_tuple) # Set static color
-            
-        # Optional: Immediately send the update if not strobing, or to ensure the strobe color is set.
-        # This can help reduce perceived latency.
-        self.send_frame() 
-
-    def send_frame(self):
-        """Sends the current DMX data frame."""
         if not self.ser:
             return
 
-        # DMX protocol requires a break and MAB (Mark After Break)
-        # Switch baudrate for break, then back for data
+        strobe_threshold = 0.2
+        if hue_speed > strobe_threshold:
+            self.strobe_on = True
+            self.strobe_interval = max(0.05, 1.0 / (hue_speed * 10))
+            self.color_to_strobe = color_tuple
+
+            # Apply color and full dimmer
+            self.set_channels_from_tuple(self.color_to_strobe)
+            self.set_channel_internal(CH_DIMMER, 255)
+
+            # Use CH3 strobe band; choose fast regular strobe by default
+            self.set_channel_internal(CH_STROBE, VAL_STROBE_FAST)
+        else:
+            self.strobe_on = False
+            self.set_channels_from_tuple(color_tuple)
+            self.set_channel_internal(CH_DIMMER, 255)
+            self.set_channel_internal(CH_STROBE, VAL_LED_START)  # constant on
+
+        self.send_frame()
+
+    def send_frame(self):
+        if not self.ser:
+            return
         try:
-            self.ser.baudrate = 57600  # Baudrate for break
-            self.ser.write(b'\x00')  # Break signal
+            # DMX break
+            self.ser.baudrate = 57600
+            self.ser.write(b'\x00')
             self.ser.flush()
-            time.sleep(0.001) # Minimum break time
-            self.ser.baudrate = 250000 # Baudrate for data
-            
-            # DMX packet starts with a START CODE (0x00 for DMX512)
-            frame = bytes([0]) + bytes(self.data) 
+            time.sleep(0.001)
+            self.ser.baudrate = 250000
+
+            # Start code + 9 bytes only
+            frame = bytes([0]) + bytes(self.data)
             self.ser.write(frame)
             self.ser.flush()
         except serial.SerialException as e:
             print(f"Error sending DMX frame: {e}")
-            # Handle potential disconnection or errors here
 
     def broadcast_loop(self):
-        """The main loop that continuously sends DMX frames."""
         print("DMX broadcast thread started.")
         while self.running:
-            if self.strobe_on:
-                # Send the 'on' state of the strobe
-                self.set_channels_from_tuple(self.color_to_strobe)
-                self.send_frame()
-                time.sleep(self.strobe_interval)
-
-                # Send the 'off' state of the strobe (all channels to 0)
-                # IMPORTANT: Some DMX controllers might expect specific "off" values
-                # or might interpret a break signal differently. This is a common approach.
-                self.clear_color_channels() 
-                self.send_frame()
-                time.sleep(self.strobe_interval)
-            else:
-                # Not strobing, just send the current static color frame
-                # The 'data' array is already set by update_lighting()
-                self.send_frame()
-                time.sleep(0.03) # Standard DMX refresh rate is ~30-40 Hz
+            self.send_frame()
+            time.sleep(self.strobe_on and self.strobe_interval or 0.03)
         print("DMX broadcast thread stopped.")
 
     def start_broadcast(self):
-        """Starts the DMX broadcast thread."""
         if not self.ser:
             print("Cannot start broadcast: Serial port not available.")
             return
-            
         if not self.running:
             self.running = True
-            # Use daemon=True so the thread exits when the main program exits
-            self.thread = threading.Thread(target=self.broadcast_loop, daemon=True) 
+            self.thread = threading.Thread(target=self.broadcast_loop, daemon=True)
             self.thread.start()
 
     def stop_broadcast(self):
-        """Stops the DMX broadcast thread."""
         if self.running and self.thread:
             self.running = False
-            self.thread.join() # Wait for the thread to finish
+            self.thread.join()
 
     def close(self):
-        """Stops broadcast and closes the serial port."""
         self.stop_broadcast()
         if self.ser and self.ser.is_open:
-            # Optionally send a clear frame before closing
             self.clear_color_channels()
-            self.send_frame() 
-            time.sleep(0.1) # Give it a moment to send
+            self.send_frame()
+            time.sleep(0.1)
             self.ser.close()
             print(f"Serial port {self.port} closed.")
 
 if __name__ == "__main__":
-    # This block is for testing pyserial.py on its own.
-    # When used with main.py, this part is not executed.
-    
-    # Example Usage for testing:
-    # Replace with your actual serial port
-    # SERIAL_PORT = "COM14" # Example for Windows
-    SERIAL_PORT = "/dev/ttyUSB0" # macOS
-    
-    dmx = SimpleDMX(port=SERIAL_PORT, num_channels=8, strobe_interval=0.5)
+    SERIAL_PORT = "/dev/ttyUSB0"
+    dmx = SimpleDMX(port=SERIAL_PORT, strobe_interval=0.5)
 
     if not dmx.ser:
         print("Exiting test script: Could not initialize DMX controller.")
@@ -179,17 +173,14 @@ if __name__ == "__main__":
         dmx.start_broadcast()
 
         try:
-            print("\n--- DMX Test Mode ---")
-            print("Enter commands like: 'red', 'blue s', 'green 5', 'yellow s 0.2 3'")
-            print("Format: <color> [s] [interval] [duration]")
-            print(" 's' after color means strobe.")
-            print(" Type 'exit' to quit.")
-            
-            colors_map = { # Basic color mapping for tests
+            print("\n--- DMX Test Mode for Behringer MH363 (9CH) ---")
+            print("CH3 (strobe), CH4-7 (RGBW), CH8 (dimmer) managed.")
+
+            colors_map = {
                 "red": (255, 0, 0, 0),
                 "green": (0, 255, 0, 0),
                 "blue": (0, 0, 255, 0),
-                "white": (255, 255, 255, 255),
+                "white": (0, 0, 0, 255),
                 "yellow": (255, 255, 0, 0),
                 "cyan": (0, 255, 255, 0),
                 "magenta": (255, 0, 255, 0),
@@ -207,56 +198,40 @@ if __name__ == "__main__":
 
                 color_name = parts[0]
                 if color_name not in colors_map:
-                    print("Invalid color. Available: red, green, blue, white, yellow, cyan, magenta, off")
+                    print("Invalid color. Available:", ", ".join(colors_map.keys()))
                     continue
 
                 color_rgbw = colors_map[color_name]
-                
-                is_strobe = False
-                strobe_interval = 0.1 # Default interval
-                duration = 5.0 # Default duration for static or strobe
 
+                is_strobe = False
+                duration = 5.0
+                # Optional: 's [speed 0.3..2.0] [duration]'
                 if len(parts) > 1 and parts[1] == 's':
                     is_strobe = True
+                    speed = 1.0
                     if len(parts) > 2:
                         try:
-                            strobe_interval = float(parts[2])
+                            speed = float(parts[2])
                         except ValueError:
-                            print("Invalid interval. Please enter a number.")
-                            continue
+                            print("Invalid speed. Using default 1.0.")
                     if len(parts) > 3:
                         try:
                             duration = float(parts[3])
                         except ValueError:
-                            print("Invalid duration. Please enter a number.")
-                            continue
+                            print("Invalid duration. Using default 5.0.")
+                    dmx.update_lighting(color_rgbw, speed)
                 else:
                     if len(parts) > 1:
                         try:
                             duration = float(parts[1])
                         except ValueError:
-                            print("Invalid duration. Please enter a number.")
-                            continue
-                
-                # Now, call the update_lighting method
-                print(f"Updating DMX: Color={color_name}, Strobe={is_strobe}, Interval={strobe_interval}, Duration={duration}")
-                
-                dmx.strobe_on = is_strobe # Set the strobe flag
-                dmx.strobe_interval = strobe_interval # Set interval if strobing
-                
-                # The update_lighting method handles setting color_to_strobe or static color
-                dmx.update_lighting(color_rgbw, strobe_interval if is_strobe else 0.1) # Pass a non-strobe speed if static
+                            print("Invalid duration. Using default 5.0.")
+                    dmx.update_lighting(color_rgbw, 0.0)
 
-                # Wait for the specified duration
                 start_wait = time.time()
                 while time.time() - start_wait < duration:
-                    if dmx.strobe_on: # If strobing, broadcast loop handles it
-                        time.sleep(0.05)
-                    else: # If static, we might need to re-send the frame periodically
-                        dmx.send_frame()
-                        time.sleep(0.03)
+                    time.sleep(0.03)
 
-                # After duration, turn off lights or reset strobe state
                 dmx.strobe_on = False
                 dmx.clear_color_channels()
                 dmx.send_frame()
@@ -265,3 +240,5 @@ if __name__ == "__main__":
             print("\nExiting DMX test...")
         finally:
             dmx.close()
+
+
