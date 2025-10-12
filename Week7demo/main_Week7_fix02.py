@@ -87,7 +87,7 @@ def lighting_controller_thread(genre, dmx_port, mood_queue, stop_event):
                 if not mood_queue.empty():
                     mood, color, loudness, energy = mood_queue.get_nowait()
                     if loudness >= LOUDNESS_HIGH_THRESHOLD:
-                        run_high_frequency_dmx_chunk(dmx, color, energy, duration=5.0)
+                        run_low_frequency_dmx_chunk(dmx, color, energy, duration=5.0) #changed from high to low
                     elif loudness <= LOUDNESS_LOW_THRESHOLD:
                         run_low_frequency_dmx_chunk(dmx, color, energy, duration=5.0)
                     else:
