@@ -77,7 +77,7 @@ def process_audio_chunk(chunk, buffer, genre):
     return mood, mood_color, loudness, energy_level
 
 def lighting_controller_thread(genre, dmx_port, mood_queue, stop_event):
-    dmx = SimpleDMX(port=dmx_port, num_channels=8)
+    dmx = SimpleDMX(port=dmx_port, num_channels=9)
     dmx.start_broadcast()
     print("\nStarting adaptive lighting controller...")
     try:
