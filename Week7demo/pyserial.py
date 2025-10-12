@@ -120,6 +120,8 @@ class SimpleDMX:
             return
         try:
             # DMX break
+            self.set_channel_internal(CH_PAN, 0)
+            self.set_channel_internal(CH_TILT, 0)
             self.ser.baudrate = 57600
             self.ser.write(b'\x00')
             self.ser.flush()
