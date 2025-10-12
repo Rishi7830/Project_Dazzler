@@ -38,17 +38,17 @@ class SimpleDMX:
     def clear_color_channels(self):
         """Clears the first 4 channels (assuming RGBW)."""
         if self.ser:
-            for ch in range(1, 5):
+            for ch in range(4, 7):
                 self.set_channel(ch, 0)
 
     def set_channels_from_tuple(self, color_tuple):
         """Sets the first 4 channels (RGBW) from a tuple."""
         if self.ser and len(color_tuple) >= 4:
             r, g, b, w = color_tuple[:4] # Take first 4 values
-            self.set_channel(1, r)
-            self.set_channel(2, g)
-            self.set_channel(3, b)
-            self.set_channel(4, w)
+            self.set_channel(4, r)
+            self.set_channel(5, g)
+            self.set_channel(6, b)
+            self.set_channel(7, w)
         elif not self.ser:
             print("Serial port not available. Cannot set channels from tuple.")
 

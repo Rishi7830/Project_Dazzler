@@ -1,0 +1,26 @@
+Chunk Start Time (s),Mood,Color (RGB),Loudness (dB),Energy Level
+0.00,Depression,"(75, 0, 130)",-36.37,low
+2.50,Depression,"(75, 0, 130)",-28.54,low
+5.00,Depression,"(75, 0, 130)",-24.82,medium
+7.50,Depression,"(75, 0, 130)",-23.73,medium
+10.00,Depression,"(75, 0, 130)",-23.60,medium
+12.50,Depression,"(75, 0, 130)",-23.20,medium
+15.00,Depression,"(75, 0, 130)",-22.84,medium
+17.50,Depression,"(75, 0, 130)",-22.76,medium
+20.00,Depression,"(75, 0, 130)",-23.13,medium
+22.50,Depression,"(75, 0, 130)",-21.36,medium
+25.00,Depression,"(75, 0, 130)",-20.22,medium
+27.50,Depression,"(75, 0, 130)",-20.39,medium
+30.00,Depression,"(75, 0, 130)",-20.02,medium
+32.50,Depression,"(75, 0, 130)",-21.11,medium
+35.00,Depression,"(75, 0, 130)",-21.37,medium
+37.50,Depression,"(75, 0, 130)",-20.39,medium
+40.00,Depression,"(75, 0, 130)",-20.56,medium
+42.50,Depression,"(75, 0, 130)",-20.81,medium
+45.00,Depression,"(75, 0, 130)",-21.14,medium
+47.50,Depression,"(75, 0, 130)",-20.61,medium
+50.00,Depression,"(75, 0, 130)",-19.77,medium
+52.50,Depression,"(75, 0, 130)",-19.52,medium
+55.00,Depression,"(75, 0, 130)",-19.57,medium
+57.50,Depression,"(75, 0, 130)",-19.54,medium
+60.00,Depression,"(75, 0, 130)",-19.43,medium

@@ -107,60 +107,24 @@ def create_color_variations(base_color, count=5):
 
 # Main DMX Functions
 
-def run_high_frequency_dmx_chunk(mood_color, energy_level, port="/dev/ttyUSB0", duration=5.0):
-    """
-    Run DMX lights for a single chunk (5 seconds) in High Frequency mode.
-    
-    Args:
-        mood_color (tuple): RGB color tuple for the mood
-        energy_level (str): Energy level ("high", "medium", "low")
-        port (str): DMX serial port
-        duration (float): Duration to run lights (seconds)
-    """
-    try:
-        # Initialize DMX
-        dmx = SimpleDMX(port=port, num_channels=8)
-        if not dmx.ser:
-            print(f"Warning: DMX controller not initialized on {port}")
-            return
-        
-        dmx.start_broadcast()
-        
-        # Get parameters based on energy level
-        brightness = energy_to_brightness(energy_level)
-        strobe_speed = energy_to_strobe_speed(energy_level)
-        variation_count = energy_to_variation_count(energy_level)
-        
-        # Create color variations
-        color_variations = create_color_variations(mood_color, variation_count)
-        
-        print(f"High-freq DMX: Color {mood_color}, Energy {energy_level}, Brightness {brightness:.2f}")
-        
-        start_time = time.time()
-        color_index = 0
-        
-        while time.time() - start_time < duration:
-            # Get current color variation
-            current_color = color_variations[color_index % len(color_variations)]
-            rgbw = rgb_to_rgbw(current_color, brightness)
-            
-            # Send to DMX
-            if dmx.ser and dmx.ser.is_open:
-                try:
-                    dmx.update_lighting(rgbw, hue_speed=1.0)
-                except serial.SerialTimeoutException:
-                    print("DMX write timeout, skipping frame")
-                except Exception as e:
-                    print(f"DMX write error: {e}")
-            
-            # Wait for strobe interval
-            time.sleep(strobe_speed)
-            
-            # Move to next color variation
-            color_index += 1
-        
-    except Exception as e:
-        print(f"High frequency DMX error: {e}")
+def run_high_frequency_dmx_chunk(dmx, mood_color, energy_level, duration=5.0):
+    import time
+    def rgb_to_rgbw(rgb_color, brightness=1.0):
+        r, g, b = rgb_color
+        w = min(r, g, b)
+        return (int(r * brightness), int(g * brightness), int(b * brightness), int(w * brightness))
+    def energy_to_strobe_speed(energy_level):
+        return {"high": 0.05, "medium": 0.1, "low": 0.2}.get(energy_level, 0.1)
+    brightness = {"high": 1.0, "medium": 0.8, "low": 0.6}.get(energy_level, 1.0)
+    color_variations = [mood_color] * 8 # Customize your ramp here if wanted
+    strobe_speed = energy_to_strobe_speed(energy_level)
+    start_time = time.time()
+    color_index = 0
+    while time.time() - start_time < duration:
+        rgbw = rgb_to_rgbw(color_variations[color_index % len(color_variations)], brightness)
+        dmx.update_lighting(rgbw, hue_speed=1.0)
+        time.sleep(strobe_speed)
+        color_index += 1
 
 def run_high_frequency_dmx(loudness_db, genre, port="COM4"):
     """

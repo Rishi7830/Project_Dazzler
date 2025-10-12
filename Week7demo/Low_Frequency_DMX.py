@@ -54,45 +54,34 @@ def create_ambient_colors(base_color, count=3):
         colors.append((r_var, g_var, b_var))
     return colors
 
-def run_low_frequency_dmx_chunk(mood_color, energy_level, port="COM14", duration=5.0):
-    try:
-        dmx = SimpleDMX(port=port, num_channels=8)
-        if not dmx.ser:
-            print(f"Warning: DMX controller not initialized on {port}")
-            return
-        dmx.start_broadcast()
+def run_low_frequency_dmx_chunk(dmx, mood_color, energy_level, duration=5.0):
+    import time
+    def rgb_to_rgbw(rgb_color, brightness=1.0):
+        r, g, b = rgb_color
+        w = min(r, g, b)
+        return (int(r * brightness), int(g * brightness), int(b * brightness), int(w * brightness))
+    def crossfade_colors(rgbw1, rgbw2, steps=60):
+        for i in range(steps + 1):
+            t = i / steps
+            yield tuple(int(a + (b - a) * t) for a, b in zip(rgbw1, rgbw2))
+    brightness = {"high": 0.8, "medium": 0.6, "low": 0.4}.get(energy_level, 0.5)
+    fade_steps = 60
+    fade_speed = 0.15
+    ambient_colors = [mood_color] * 3
+    start_time = time.time()
+    color_index = 0
+    while time.time() - start_time < duration:
+        current_color = ambient_colors[color_index % len(ambient_colors)]
+        next_color = ambient_colors[(color_index + 1) % len(ambient_colors)]
+        current_rgbw = rgb_to_rgbw(current_color, brightness)
+        next_rgbw = rgb_to_rgbw(next_color, brightness)
+        for fade_color in crossfade_colors(current_rgbw, next_rgbw, fade_steps):
+            if time.time() - start_time >= duration:
+                break
+            dmx.update_lighting(fade_color, hue_speed=0.3)
+            time.sleep(fade_speed)
+        color_index += 1
 
-        brightness = energy_to_brightness(energy_level)
-        fade_speed = 0.15  # Smoother/longer fade per step
-        fade_steps = 60    # More steps for smoother transition
-
-        ambient_colors = create_ambient_colors(mood_color, 3)
-        print(f"Low-freq DMX: Color {mood_color}, Energy {energy_level}, Brightness {brightness:.2f}")
-
-        start_time = time.time()
-        color_index = 0
-
-        while time.time() - start_time < duration:
-            current_color = ambient_colors[color_index % len(ambient_colors)]
-            next_color = ambient_colors[(color_index + 1) % len(ambient_colors)]
-            current_rgbw = rgb_to_rgbw(current_color, brightness)
-            next_rgbw = rgb_to_rgbw(next_color, brightness)
-            for fade_color in crossfade_colors(current_rgbw, next_rgbw, fade_steps):
-                if time.time() - start_time >= duration:
-                    break
-                if dmx.ser and dmx.ser.is_open:
-                    try:
-                        dmx.update_lighting(fade_color, hue_speed=0.3)
-                    except serial.SerialTimeoutException:
-                        print("DMX write timeout, skipping frame")
-                    except Exception as e:
-                        print(f"DMX write error: {e}")
-                time.sleep(fade_speed)
-            color_index += 1
-        dmx.close()
-
-    except Exception as e:
-        print(f"Low frequency DMX error: {e}")
 
 # Optional: Test function for visual preview (not called in normal pipeline)
 def test_low_frequency_dmx():
