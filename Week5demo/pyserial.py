@@ -31,7 +31,7 @@ VAL_LIGHTNING   = 244   # in the "lightning" band (~240–247)
 VAL_LED_START   = 255   # constant on
 
 class SimpleDMX:
-    def __init__(self, port: str, strobe_interval: float = 0.1):
+    def __init__(self, port: str, strobe_interval: float = 0.1, num_channels: int = 9):
         self.port = port
         # Enforce exactly 9 channels for this fixture mode
         self.num_channels = 9
@@ -240,3 +240,4 @@ if __name__ == "__main__":
             print("\nExiting DMX test...")
         finally:
             dmx.close()
+
