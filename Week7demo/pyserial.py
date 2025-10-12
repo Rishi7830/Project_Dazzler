@@ -167,7 +167,7 @@ class SimpleDMX:
             print(f"Serial port {self.port} closed.")
 
 if __name__ == "__main__":
-    SERIAL_PORT = "/dev/ttyUSB0"
+    SERIAL_PORT = "/dev/ttyUSB1"  #Chnged from USB0
     dmx = SimpleDMX(port=SERIAL_PORT, strobe_interval=0.5)
 
     if not dmx.ser:
@@ -244,6 +244,7 @@ if __name__ == "__main__":
             print("\nExiting DMX test...")
         finally:
             dmx.close()
+
 
 
 
