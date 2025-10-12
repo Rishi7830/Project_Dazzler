@@ -44,7 +44,8 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9): #change
         return _NoopDMX()
     port = port or _suggest_default_port()
     try:
-        dmx = SimpleDMX(port=port, num_channels=num_channels)
+        #dmx = SimpleDMX(port=port, num_channels=num_channels)
+        dmx = SimpleDMX(port=port)
         dmx.start_broadcast()
         print(f"[DMX] Started on {port} channels={num_channels}")
         return dmx
