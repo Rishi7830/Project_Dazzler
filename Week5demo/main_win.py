@@ -40,7 +40,7 @@ class _NoopDMX:
         print(f"[DMX] (noop) {rgbw_tuple} speed={hue_speed:.2f}")
 
 
-def init_dmx_controller(port: str | None = None, num_channels: int = 8):
+def init_dmx_controller(port: str | None = None, num_channels: int = 9): #changed to 9 channels
     if SimpleDMX is None:
         return _NoopDMX()
     port = port or _suggest_default_port()
