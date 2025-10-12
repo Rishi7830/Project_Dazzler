@@ -6,7 +6,7 @@ import numpy as np
 import csv
 import threading
 import queue
-from dmx_controller import SimpleDMX #Changed from pyserial
+from pyserial import SimpleDMX #Changed from pyserial
 
 from Buffer_Manager_Week7 import AudioBuffer
 from Mode_Extraction_Week7 import detect_mode_key
