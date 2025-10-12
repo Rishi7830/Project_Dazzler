@@ -1,6 +1,6 @@
 import time
 import random
-from pyserial import SimpleDMX
+from dmx_controller import SimpleDMX
 import serial
 
 # Utility Functions
@@ -100,3 +100,4 @@ def test_low_frequency_dmx():
 
 if __name__ == "__main__":
     test_low_frequency_dmx()
+
