@@ -1,0 +1,3 @@
+Chunk Start Time (s),Mood,Color (RGB),Loudness (dB),Energy Level
+0.00,Excitement,"(255, 0, 0)",-45.11,low
+2.50,Excitement,"(255, 0, 0)",-9.38,high

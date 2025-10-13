@@ -1,0 +1,10 @@
+Chunk Start Time (s),Mood,Color (RGB),Loudness (dB),Energy Level
+0.00,Excitement,"(255, 69, 0)",-45.11,low
+2.50,Excitement,"(255, 69, 0)",-9.38,high
+5.00,Displeasure,"(128, 0, 128)",-8.56,high
+7.50,Excitement,"(255, 69, 0)",-10.61,high
+10.00,Displeasure,"(128, 0, 128)",-11.10,high
+12.50,Excitement,"(255, 69, 0)",-10.50,high
+15.00,Excitement,"(255, 69, 0)",-10.85,high
+17.50,Displeasure,"(128, 0, 128)",-10.07,high
+20.00,Excitement,"(255, 69, 0)",-8.27,high
