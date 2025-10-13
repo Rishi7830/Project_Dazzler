@@ -26,10 +26,10 @@ except Exception as e:
 def _suggest_default_port() -> str:
     sysname = platform.system().lower()
     if sysname.startswith("win"):
-        return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB1")
+        return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB2")
     if sysname == "darwin":
-        return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB1") #/dev/tty.usbserial
-    return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB1")
+        return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB2") #/dev/tty.usbserial
+    return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB2")
 
 
 class _NoopDMX:
@@ -44,7 +44,8 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9): #change
         return _NoopDMX()
     port = port or _suggest_default_port()
     try:
-        dmx = SimpleDMX(port=port, num_channels=num_channels)
+        #dmx = SimpleDMX(port=port, num_channels=num_channels)
+        dmx = SimpleDMX(port=port)
         dmx.start_broadcast()
         print(f"[DMX] Started on {port} channels={num_channels}")
         return dmx
@@ -178,7 +179,7 @@ def stream_mp3_realtime(
 
 if __name__ == "__main__":
     mp3_file = Path(__file__).with_name("Love Will Keep Us Alive (1999 Remaster).mp3")
-    dmx = init_dmx_controller(port="/dev/ttyUSB1", num_channels=9) #changed from None to the USB1
+    dmx = init_dmx_controller(port="/dev/ttyUSB2", num_channels=9) #changed from None to the USB2
     stream_mp3_realtime(
         mp3_path=str(mp3_file),
         dmx=dmx,
