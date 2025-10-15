@@ -1,8 +1,7 @@
 """
-Realtime MP3 -> Feature Analysis + DMX output (WSL Stable)
-Decodes MP3 and performs real-time analysis for DMX control.
-Audio playback via speakers is DISABLED to prevent crashing in WSL/headless environments.
-Requires ffmpeg, numpy, and pyserial (or runs in noop mode if pyserial fails).
+Realtime MP3 -> Feature Analysis + DMX output + Synchronized External Playback
+Launches the MP3 file using an external player on the host system to bypass
+WSL audio limitations, while analyzing the audio in real time for DMX control.
 """
 
 import os
@@ -11,7 +10,6 @@ import platform
 import subprocess
 from pathlib import Path
 import numpy as np
-# sounddevice import is removed, as it causes the crash in WSL
 
 # Assuming these modules are available in the directory
 from tempo_detection import detect_tempo
@@ -23,7 +21,6 @@ from color_mapper import map_to_colors
 try:
     from pyserial import SimpleDMX
 except Exception as e:
-    # This warning is expected in WSL if the serial port isn't configured
     print(f"[WARN] Could not import SimpleDMX: {e}. DMX will be simulated.")
     SimpleDMX = None
 
@@ -41,15 +38,13 @@ def _suggest_default_port() -> str:
 class _NoopDMX:
     """Mock DMX controller for when hardware or pyserial is unavailable."""
     def start_broadcast(self): 
-        # Only prints once to avoid spamming the console
         if not hasattr(self, '_started'):
              print("[DMX] Broadcast simulation started (using _NoopDMX)")
              self._started = True
     def stop_broadcast(self): pass
     def close(self): pass
     def update_lighting(self, rgbw_tuple, hue_speed):
-        # We simulate the DMX update without a print statement to avoid lag
-        pass
+        pass # No print to avoid lag
 
 def init_dmx_controller(port: str | None = None, num_channels: int = 9):
     """Initializes the DMX controller or returns a no-op fallback."""
@@ -66,19 +61,60 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9):
         return _NoopDMX()
 
 
+def start_external_player(mp3_path):
+    """
+    Starts an external music player process asynchronously.
+    This is necessary for WSL environments where direct audio playback fails.
+    """
+    if platform.system().lower() == 'windows' or 'wsl' in platform.platform().lower():
+        # In WSL, try using the 'wsl-open' or 'xdg-open' which usually delegates to Windows' default app
+        # We need the Windows path, not the WSL path, so we use 'wslpath -w' if available
+        try:
+            # Convert WSL path to Windows path for cross-environment command execution
+            win_path = subprocess.check_output(['wslpath', '-w', mp3_path]).decode('utf-8').strip()
+            # Use 'cmd /c start' to open the file using the Windows default application
+            subprocess.Popen(f'cmd.exe /c start "" "{win_path}"', shell=True, 
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"[PLAY] Launched external playback (Windows Host): {win_path}")
+            return True
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            # Fallback for older WSL or if wslpath is missing, try standard Linux tool
+            print("[WARN] wslpath/cmd not available. Attempting xdg-open...")
+            try:
+                subprocess.Popen(["xdg-open", mp3_path], 
+                                 stdout=subprocess.DEVNULL, 
+                                 stderr=subprocess.DEVNULL, 
+                                 start_new_session=True)
+                print(f"[PLAY] Launched external playback (xdg-open): {mp3_path}")
+                return True
+            except FileNotFoundError:
+                 print("[FAIL] Neither native Windows launch nor xdg-open could start the song.")
+                 print("[FAIL] Please start the song manually on your Windows host *now* to sync analysis.")
+                 return False
+
+    # For native Linux/macOS systems where sounddevice also fails (unlikely here)
+    try:
+        subprocess.Popen(["xdg-open", mp3_path], start_new_session=True)
+        print(f"[PLAY] Launched external playback (xdg-open): {mp3_path}")
+        return True
+    except FileNotFoundError:
+        print("[FAIL] Could not start external player. Please play the song manually now.")
+        return False
+
+
 def stream_mp3_realtime(
     mp3_path: str,
     dmx,
     sample_rate: int = 44100,
-    channels: int = 1,          # Mono is sufficient for analysis
-    audio_block: int = 1024,    # Block size for decoding (samples per channel)
-    chunk_seconds: float = 0.25, # Analysis window length
-    hop_ratio: float = 0.5,      # Analysis hop = 50% overlap
+    channels: int = 1,
+    audio_block: int = 1024,
+    chunk_seconds: float = 0.25,
+    hop_ratio: float = 0.5,
     save_json: bool = True,
 ):
     """
     Stream-decode MP3 in real time, analyze features, and update DMX lighting.
-    Does NOT include audio playback.
+    The audio is played externally to bypass WSL/headless limitations.
     """
     mp3_path = str(mp3_path)
     if not Path(mp3_path).exists():
@@ -108,24 +144,23 @@ def stream_mp3_realtime(
         (255, 128,   0, 0),  # Orange for 2
         (255, 255,   0, 0)   # Yellow for 1
     ]
-    dmx.start_broadcast() # Ensure broadcast starts now
+    dmx.start_broadcast()
 
     for i, color in enumerate(reversed(countdown_colors), start=1):
         dmx.update_lighting(color, hue_speed=0)
         print(f"Countdown: {4 - i}")
         time.sleep(1)
         
-    # Set lights to initial black before starting music (optional, but good practice)
-    dmx.update_lighting((0, 0, 0, 0), hue_speed=0)
+    # Start audio playback on the host system immediately after the countdown
+    start_external_player(mp3_path)
     
-    print("[WAIT] Start playing the audio externally on your host machine now...")
-    # Add a short delay to allow the user to manually start the external player
-    time.sleep(2) 
+    # Set lights to initial black before starting analysis
+    dmx.update_lighting((0, 0, 0, 0), hue_speed=0)
     print("[OK] Starting audio analysis.")
 
 
     # 3. Setup buffers and counters for real-time processing
-    bytes_per_sample = 4  # float32
+    bytes_per_sample = 4
     frame_bytes = audio_block * channels * bytes_per_sample
     chunk_samples = int(chunk_seconds * sample_rate)
     hop_samples = max(1, int(chunk_samples * hop_ratio))
@@ -138,17 +173,13 @@ def stream_mp3_realtime(
 
     try:
         while True:
-            # Read one block of raw audio data from ffmpeg
             raw = proc.stdout.read(frame_bytes)
             
             if not raw or len(raw) < frame_bytes:
-                break  # End of stream
+                break
 
-            # Convert raw bytes to numpy array
             block = np.frombuffer(raw, dtype=np.float32)
             
-            # --- NO AUDIO PLAYBACK CODE HERE ---
-
             # --- ANALYSIS BUFFERING ---
             analysis_buffer = np.concatenate((analysis_buffer, block))
 
@@ -207,14 +238,14 @@ def stream_mp3_realtime(
         print(f"[ERR] Runtime Exception: {e}")
 
     finally:
-        # We ensure DMX and FFmpeg processes are closed.
         pass
 
 
 if __name__ == "__main__":
     dmx = None
     try:
-        mp3_file = Path(__file__).with_name("Love Will Keep Us Alive (1999 Remaster).mp3")
+        # NOTE: Using the absolute path is safer for cross-environment launching
+        mp3_file = Path(__file__).with_name("Love Will Keep Us Alive (1999 Remaster).mp3").resolve()
         dmx = init_dmx_controller(port="/dev/ttyUSB2", num_channels=9)
         
         stream_mp3_realtime(
@@ -230,7 +261,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"An error occurred in the main process: {e}")
     finally:
-        # Clean up DMX resources
         if dmx:
             try:
                 dmx.stop_broadcast()
@@ -238,3 +268,4 @@ if __name__ == "__main__":
             except Exception:
                 pass
         print("[OK] Application finished.")
+
