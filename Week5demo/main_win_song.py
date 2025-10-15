@@ -64,35 +64,26 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9):
 def start_external_player(mp3_path):
     """
     Starts an external music player process asynchronously.
-    This is necessary for WSL environments where direct audio playback fails.
+    Uses 'wsl.exe start' to leverage Windows' file association system directly.
     """
-    if platform.system().lower() == 'windows' or 'wsl' in platform.platform().lower():
-        # In WSL, try using the 'wsl-open' or 'xdg-open' which usually delegates to Windows' default app
-        # We need the Windows path, not the WSL path, so we use 'wslpath -w' if available
+    if 'wsl' in platform.platform().lower():
+        # Critical fix: Use 'wsl.exe start' which is the proper way to launch 
+        # a Windows application from a WSL path without explicit path conversion.
         try:
-            # Convert WSL path to Windows path for cross-environment command execution
-            win_path = subprocess.check_output(['wslpath', '-w', mp3_path]).decode('utf-8').strip()
-            # Use 'cmd /c start' to open the file using the Windows default application
-            subprocess.Popen(f'cmd.exe /c start "" "{win_path}"', shell=True, 
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"[PLAY] Launched external playback (Windows Host): {win_path}")
+            # We must pass the WSL path as an argument to the Windows 'wsl.exe' command.
+            # We use subprocess.Popen to execute it non-blocking.
+            # 'wsl.exe start' tells Windows to open the path using its default program.
+            subprocess.Popen(['wsl.exe', 'start', mp3_path], 
+                             stdout=subprocess.DEVNULL, 
+                             stderr=subprocess.DEVNULL)
+            print(f"[PLAY] Launched external playback via 'wsl.exe start'.")
             return True
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            # Fallback for older WSL or if wslpath is missing, try standard Linux tool
-            print("[WARN] wslpath/cmd not available. Attempting xdg-open...")
-            try:
-                subprocess.Popen(["xdg-open", mp3_path], 
-                                 stdout=subprocess.DEVNULL, 
-                                 stderr=subprocess.DEVNULL, 
-                                 start_new_session=True)
-                print(f"[PLAY] Launched external playback (xdg-open): {mp3_path}")
-                return True
-            except FileNotFoundError:
-                 print("[FAIL] Neither native Windows launch nor xdg-open could start the song.")
-                 print("[FAIL] Please start the song manually on your Windows host *now* to sync analysis.")
-                 return False
+        except FileNotFoundError:
+             print("[FAIL] 'wsl.exe start' command not found. Cannot launch external player.")
+             print("[FAIL] Please start the song manually on your Windows host *now* to sync analysis.")
+             return False
 
-    # For native Linux/macOS systems where sounddevice also fails (unlikely here)
+    # Fallback for native Linux/macOS systems 
     try:
         subprocess.Popen(["xdg-open", mp3_path], start_new_session=True)
         print(f"[PLAY] Launched external playback (xdg-open): {mp3_path}")
@@ -244,7 +235,6 @@ def stream_mp3_realtime(
 if __name__ == "__main__":
     dmx = None
     try:
-        # NOTE: Using the absolute path is safer for cross-environment launching
         mp3_file = Path(__file__).with_name("Love Will Keep Us Alive (1999 Remaster).mp3").resolve()
         dmx = init_dmx_controller(port="/dev/ttyUSB2", num_channels=9)
         
@@ -268,4 +258,5 @@ if __name__ == "__main__":
             except Exception:
                 pass
         print("[OK] Application finished.")
+
 
