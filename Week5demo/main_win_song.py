@@ -1,7 +1,7 @@
 """
 Realtime MP3 -> Feature Analysis + DMX output + Synchronized External Playback
-Uses a robust 'wslpath' and 'explorer.exe' combination to launch the MP3 
-file on the Windows host, bypassing WSL audio limitations.
+Uses a two-path system (WSL path for FFmpeg, Windows path for playback)
+and the reliable 'cmd.exe /c start' command to launch the MP3 on the host.
 """
 
 import os
@@ -61,34 +61,31 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9):
         return _NoopDMX()
 
 
-def start_external_player(mp3_path):
+def start_external_player(mp3_path_win: str):
     """
-    Starts an external music player process asynchronously.
-    Uses 'wslpath -w' to get the Windows-style path, then uses 'explorer.exe' to launch it.
+    Starts an external music player process asynchronously using the 
+    Windows path and the reliable 'cmd.exe /c start' command.
     """
     if 'wsl' in platform.platform().lower():
         try:
-            # Step 1: Convert the Linux path to the Windows format (e.g., C:\...)
-            win_path_bytes = subprocess.check_output(['wslpath', '-w', mp3_path])
-            win_path = win_path_bytes.decode('utf-8').strip()
-            
-            # Step 2: Use explorer.exe to open the file on the Windows host.
-            # Explorer.exe is highly reliable for launching files via file association.
-            # We use a list format for Popen to ensure proper quoting of spaces in the path.
-            subprocess.Popen(['explorer.exe', win_path], 
+            # Use 'cmd.exe /c start' to open the file using the Windows default application.
+            # We use Popen with a list for clean argument passing, especially with spaces.
+            # The empty string "" after 'start' is crucial to handle paths with spaces correctly.
+            subprocess.Popen(['cmd.exe', '/c', 'start', '', mp3_path_win], 
                              stdout=subprocess.DEVNULL, 
                              stderr=subprocess.DEVNULL)
-            print(f"[PLAY] Launched external playback using explorer.exe: {win_path}")
+            print(f"[PLAY] Launched external playback via cmd.exe: {mp3_path_win}")
             return True
-        except (FileNotFoundError, subprocess.CalledProcessError) as e:
-             print(f"[FAIL] Could not launch external player via wslpath/explorer: {e}")
+        except FileNotFoundError as e:
+             # This means cmd.exe or a related Windows component is not found in PATH
+             print(f"[FAIL] Could not launch external player via cmd.exe: {e}")
              print("[FAIL] Please start the song manually on your Windows host *now* to sync analysis.")
              return False
 
     # Fallback for native Linux/macOS systems 
     try:
-        subprocess.Popen(["xdg-open", mp3_path], start_new_session=True)
-        print(f"[PLAY] Launched external playback (xdg-open): {mp3_path}")
+        subprocess.Popen(["xdg-open", mp3_path_win], start_new_session=True)
+        print(f"[PLAY] Launched external playback (xdg-open): {mp3_path_win}")
         return True
     except FileNotFoundError:
         print("[FAIL] Could not start external player. Please play the song manually now.")
@@ -96,7 +93,8 @@ def start_external_player(mp3_path):
 
 
 def stream_mp3_realtime(
-    mp3_path: str,
+    mp3_path_wsl: str,
+    mp3_path_win: str,
     dmx,
     sample_rate: int = 44100,
     channels: int = 1,
@@ -106,19 +104,19 @@ def stream_mp3_realtime(
     save_json: bool = True,
 ):
     """
-    Stream-decode MP3 in real time, analyze features, and update DMX lighting.
-    The audio is played externally to bypass WSL/headless limitations.
+    Stream-decode MP3 in real time (using WSL path for FFmpeg), 
+    analyze features, and update DMX lighting.
+    The audio is played externally (using Windows path for playback).
     """
-    mp3_path = str(mp3_path)
-    if not Path(mp3_path).exists():
-        print(f"[ERR] File not found: {mp3_path}")
+    if not Path(mp3_path_wsl).exists():
+        print(f"[ERR] File not found by FFmpeg (WSL Path): {mp3_path_wsl}")
         return
 
     # 1. Setup FFmpeg decoding process
     cmd = [
         "ffmpeg",
         "-hide_banner", "-loglevel", "error",
-        "-i", mp3_path,
+        "-i", mp3_path_wsl,  # FFmpeg uses the WSL path to read the file
         "-f", "f32le",
         "-ac", str(channels),
         "-ar", str(sample_rate),
@@ -145,7 +143,7 @@ def stream_mp3_realtime(
         time.sleep(1)
         
     # Start audio playback on the host system immediately after the countdown
-    start_external_player(mp3_path)
+    start_external_player(mp3_path_win) # Windows Player uses the WIN path
     
     # Set lights to initial black before starting analysis
     dmx.update_lighting((0, 0, 0, 0), hue_speed=0)
@@ -162,7 +160,7 @@ def stream_mp3_realtime(
 
     start_time = time.time()
 
-    print(f"[RUN] Streaming {mp3_path} at {sample_rate} Hz - chunk={chunk_seconds}s, hop={hop_ratio}")
+    print(f"[RUN] Streaming {mp3_path_wsl} at {sample_rate} Hz - chunk={chunk_seconds}s, hop={hop_ratio}")
 
     try:
         while True:
@@ -218,7 +216,7 @@ def stream_mp3_realtime(
         if save_json and results:
             out_dir = Path(__file__).parent / "outputs"
             out_dir.mkdir(parents=True, exist_ok=True)
-            out_file = out_dir / f"lighting_data_{Path(mp3_path).stem}_realtime.json"
+            out_file = out_dir / f"lighting_data_{Path(mp3_path_wsl).stem}_realtime.json"
             import json
             with open(out_file, "w") as f:
                 json.dump(results, f, indent=2)
@@ -237,11 +235,19 @@ def stream_mp3_realtime(
 if __name__ == "__main__":
     dmx = None
     try:
-        mp3_file = Path(__file__).with_name("Love Will Keep Us Alive (1999 Remaster).mp3").resolve()
+        # 1. Define the Windows Absolute Path (for the Player)
+        # We use a raw string (r"...") to avoid issues with backslashes
+        mp3_file_win = r"C:\Users\Rishi Moorthy\Desktop\Love Will Keep Us Alive (1999 Remaster).mp3"
+        
+        # 2. Convert to the corresponding WSL Path (for FFmpeg)
+        # This assumes your C drive is mounted at /mnt/c, which is standard in WSL.
+        mp3_file_wsl = mp3_file_win.replace("C:", "/mnt/c").replace("\\", "/") 
+        
         dmx = init_dmx_controller(port="/dev/ttyUSB2", num_channels=9)
         
         stream_mp3_realtime(
-            mp3_path=str(mp3_file),
+            mp3_path_wsl=mp3_file_wsl,
+            mp3_path_win=mp3_file_win,
             dmx=dmx,
             sample_rate=44100,
             channels=1, 
@@ -260,6 +266,7 @@ if __name__ == "__main__":
             except Exception:
                 pass
         print("[OK] Application finished.")
+
 
 
 
