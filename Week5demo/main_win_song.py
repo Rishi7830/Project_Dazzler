@@ -1,7 +1,7 @@
 """
 Realtime MP3 -> Feature Analysis + DMX output + Synchronized External Playback
-Launches the MP3 file using an external player on the host system to bypass
-WSL audio limitations, while analyzing the audio in real time for DMX control.
+Uses a robust 'wslpath' and 'explorer.exe' combination to launch the MP3 
+file on the Windows host, bypassing WSL audio limitations.
 """
 
 import os
@@ -64,22 +64,24 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9):
 def start_external_player(mp3_path):
     """
     Starts an external music player process asynchronously.
-    Uses 'wsl.exe start' to leverage Windows' file association system directly.
+    Uses 'wslpath -w' to get the Windows-style path, then uses 'explorer.exe' to launch it.
     """
     if 'wsl' in platform.platform().lower():
-        # Critical fix: Use 'wsl.exe start' which is the proper way to launch 
-        # a Windows application from a WSL path without explicit path conversion.
         try:
-            # We must pass the WSL path as an argument to the Windows 'wsl.exe' command.
-            # We use subprocess.Popen to execute it non-blocking.
-            # 'wsl.exe start' tells Windows to open the path using its default program.
-            subprocess.Popen(['wsl.exe', 'start', mp3_path], 
+            # Step 1: Convert the Linux path to the Windows format (e.g., C:\...)
+            win_path_bytes = subprocess.check_output(['wslpath', '-w', mp3_path])
+            win_path = win_path_bytes.decode('utf-8').strip()
+            
+            # Step 2: Use explorer.exe to open the file on the Windows host.
+            # Explorer.exe is highly reliable for launching files via file association.
+            # We use a list format for Popen to ensure proper quoting of spaces in the path.
+            subprocess.Popen(['explorer.exe', win_path], 
                              stdout=subprocess.DEVNULL, 
                              stderr=subprocess.DEVNULL)
-            print(f"[PLAY] Launched external playback via 'wsl.exe start'.")
+            print(f"[PLAY] Launched external playback using explorer.exe: {win_path}")
             return True
-        except FileNotFoundError:
-             print("[FAIL] 'wsl.exe start' command not found. Cannot launch external player.")
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+             print(f"[FAIL] Could not launch external player via wslpath/explorer: {e}")
              print("[FAIL] Please start the song manually on your Windows host *now* to sync analysis.")
              return False
 
@@ -258,5 +260,6 @@ if __name__ == "__main__":
             except Exception:
                 pass
         print("[OK] Application finished.")
+
 
 
