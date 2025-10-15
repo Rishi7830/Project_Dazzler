@@ -2,7 +2,6 @@
 Realtime MP3 -> Feature Analysis + DMX output + Synchronized External Playback
 Uses a controlled synchronization flow to ensure the audio analysis begins 
 shortly after the external music player has time to launch and start playing.
-(This version reports progress based on the system clock, which can appear jumpy.)
 """
 
 import os
@@ -168,7 +167,7 @@ def stream_mp3_realtime(
     analysis_buffer = np.empty(0, dtype=np.float32)
     results = []
 
-    start_time = time.time() # This starts the timer for the progress reporting
+    start_time = time.time()
 
     print(f"[RUN] Streaming {mp3_path_wsl} at {sample_rate} Hz - chunk={chunk_seconds}s, hop={hop_ratio}")
 
@@ -187,7 +186,6 @@ def stream_mp3_realtime(
 
             # --- REAL-TIME ANALYSIS ---
             while analysis_buffer.size >= chunk_samples:
-                # --- This is the original, time-based progress reporting ---
                 elapsed = time.time() - start_time
                 if len(results) % 10 == 0:
                     print(f"Progress: {elapsed:.2f} seconds")
@@ -275,4 +273,3 @@ if __name__ == "__main__":
             except Exception:
                 pass
         print("[OK] Application finished.")
-
