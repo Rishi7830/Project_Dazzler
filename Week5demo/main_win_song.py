@@ -1,8 +1,8 @@
 """
-Realtime MP3 -> Feature Analysis + DMX output + Audio Playback
-Plays MP3 audio on your laptop speakers while analyzing features
-and updating DMX lighting.
-Requires ffmpeg, numpy, and sounddevice.
+Realtime MP3 -> Feature Analysis + DMX output (WSL Stable)
+Decodes MP3 and performs real-time analysis for DMX control.
+Audio playback via speakers is DISABLED to prevent crashing in WSL/headless environments.
+Requires ffmpeg, numpy, and pyserial (or runs in noop mode if pyserial fails).
 """
 
 import os
@@ -11,7 +11,7 @@ import platform
 import subprocess
 from pathlib import Path
 import numpy as np
-import sounddevice as sd # <-- ADDED FOR PLAYBACK
+# sounddevice import is removed, as it causes the crash in WSL
 
 # Assuming these modules are available in the directory
 from tempo_detection import detect_tempo
@@ -23,30 +23,32 @@ from color_mapper import map_to_colors
 try:
     from pyserial import SimpleDMX
 except Exception as e:
-    print(f"[WARN] Could not import SimpleDMX: {e}")
+    # This warning is expected in WSL if the serial port isn't configured
+    print(f"[WARN] Could not import SimpleDMX: {e}. DMX will be simulated.")
     SimpleDMX = None
 
 
 def _suggest_default_port() -> str:
-    # Use environment variable DAZZLER_DMX_PORT or a default path
+    """Suggests the default DMX port based on OS."""
     sysname = platform.system().lower()
     if sysname.startswith("win"):
         return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB2")
     if sysname == "darwin":
-        # macOS commonly uses this path for USB serial adapters
         return os.environ.get("DAZZLER_DMX_PORT", "/dev/tty.usbserial")
-    # Default for Linux/WSL
     return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB2")
 
 
 class _NoopDMX:
-    """Mock DMX controller for when hardware is unavailable."""
-    def start_broadcast(self): print("[DMX] Broadcast disabled (no hardware)")
-    def stop_broadcast(self): print("[DMX] Stopped noop broadcast")
+    """Mock DMX controller for when hardware or pyserial is unavailable."""
+    def start_broadcast(self): 
+        # Only prints once to avoid spamming the console
+        if not hasattr(self, '_started'):
+             print("[DMX] Broadcast simulation started (using _NoopDMX)")
+             self._started = True
+    def stop_broadcast(self): pass
     def close(self): pass
     def update_lighting(self, rgbw_tuple, hue_speed):
-        # We only print for the first few updates to avoid spamming the console
-        # print(f"[DMX] (noop) {rgbw_tuple} speed={hue_speed:.2f}")
+        # We simulate the DMX update without a print statement to avoid lag
         pass
 
 def init_dmx_controller(port: str | None = None, num_channels: int = 9):
@@ -55,10 +57,9 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9):
         return _NoopDMX()
     port = port or _suggest_default_port()
     try:
-        # NOTE: Using the SimpleDMX(port=port) constructor as seen in your original code
         dmx = SimpleDMX(port=port)
         dmx.start_broadcast()
-        print(f"[DMX] Started on {port} channels={num_channels}")
+        print(f"[DMX] Started real controller on {port} channels={num_channels}")
         return dmx
     except Exception as e:
         print(f"[DMX] Could not open {port}: {e} -> using noop")
@@ -70,14 +71,14 @@ def stream_mp3_realtime(
     dmx,
     sample_rate: int = 44100,
     channels: int = 1,          # Mono is sufficient for analysis
-    audio_block: int = 1024,    # Block size for both decoding and playback (samples per channel)
+    audio_block: int = 1024,    # Block size for decoding (samples per channel)
     chunk_seconds: float = 0.25, # Analysis window length
     hop_ratio: float = 0.5,      # Analysis hop = 50% overlap
     save_json: bool = True,
 ):
     """
-    Stream-decode MP3 in real time, analyze features, update DMX lighting,
-    and play audio via sounddevice.
+    Stream-decode MP3 in real time, analyze features, and update DMX lighting.
+    Does NOT include audio playback.
     """
     mp3_path = str(mp3_path)
     if not Path(mp3_path).exists():
@@ -96,36 +97,34 @@ def stream_mp3_realtime(
     ]
 
     try:
-        # Start the decoding process
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     except FileNotFoundError:
         print("[ERR] ffmpeg not found in PATH; install ffmpeg and retry")
         return
 
-    # 2. Setup sounddevice audio output stream
-    audio_stream = sd.OutputStream(
-        samplerate=sample_rate,
-        channels=channels,
-        dtype="float32",
-        blocksize=audio_block
-    )
-
-    # 3. 3-2-1 Countdown & DMX Initialization
+    # 2. 3-2-1 Countdown & DMX Initialization
     countdown_colors = [
         (255,   0,   0, 0),  # Red for 3
         (255, 128,   0, 0),  # Orange for 2
         (255, 255,   0, 0)   # Yellow for 1
     ]
+    dmx.start_broadcast() # Ensure broadcast starts now
+
     for i, color in enumerate(reversed(countdown_colors), start=1):
         dmx.update_lighting(color, hue_speed=0)
         print(f"Countdown: {4 - i}")
         time.sleep(1)
+        
+    # Set lights to initial black before starting music (optional, but good practice)
+    dmx.update_lighting((0, 0, 0, 0), hue_speed=0)
+    
+    print("[WAIT] Start playing the audio externally on your host machine now...")
+    # Add a short delay to allow the user to manually start the external player
+    time.sleep(2) 
+    print("[OK] Starting audio analysis.")
 
-    # Start audio playback stream immediately after countdown
-    audio_stream.start()
-    print("[OK] Starting audio playback and analysis...")
 
-    # 4. Setup buffers and counters for real-time processing
+    # 3. Setup buffers and counters for real-time processing
     bytes_per_sample = 4  # float32
     frame_bytes = audio_block * channels * bytes_per_sample
     chunk_samples = int(chunk_seconds * sample_rate)
@@ -148,21 +147,14 @@ def stream_mp3_realtime(
             # Convert raw bytes to numpy array
             block = np.frombuffer(raw, dtype=np.float32)
             
-            # --- AUDIO PLAYBACK ---
-            # Write the block to the speaker output stream
-            # Reshape is only necessary if channels > 1, but safe to include.
-            if block.size > 0:
-                audio_stream.write(block.reshape(-1, channels))
+            # --- NO AUDIO PLAYBACK CODE HERE ---
 
             # --- ANALYSIS BUFFERING ---
-            # Add the new block to the analysis buffer
             analysis_buffer = np.concatenate((analysis_buffer, block))
 
             # --- REAL-TIME ANALYSIS ---
-            # Process analysis windows as they become available
             while analysis_buffer.size >= chunk_samples:
                 elapsed = time.time() - start_time
-                # Only print progress periodically to avoid console lag
                 if len(results) % 10 == 0:
                     print(f"Progress: {elapsed:.2f} seconds")
 
@@ -177,7 +169,6 @@ def stream_mp3_realtime(
                 )
                 color_dict = map_to_colors(color_name, hue_speed)
                 r, g, b = color_dict["primary_color"]["rgb"]
-                # For DMX, we ensure these are integers
                 rgbw = (int(r), int(g), int(b), 0) 
                 dmx.update_lighting(rgbw, hue_speed)
 
@@ -199,7 +190,7 @@ def stream_mp3_realtime(
         proc.stdout.close()
         proc.wait()
 
-        # Save results after playback finishes
+        # Save results after analysis finishes
         if save_json and results:
             out_dir = Path(__file__).parent / "outputs"
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -216,18 +207,11 @@ def stream_mp3_realtime(
         print(f"[ERR] Runtime Exception: {e}")
 
     finally:
-        # Crucial cleanup for sounddevice and dmx
-        if audio_stream and audio_stream.active:
-            audio_stream.stop()
-        if audio_stream:
-            audio_stream.close()
-        
-        # Ensure DMX and FFmpeg processes are closed outside the main loop's control
-        # (DMX cleanup is handled in the main __name__ == "__main__" block)
+        # We ensure DMX and FFmpeg processes are closed.
+        pass
 
 
 if __name__ == "__main__":
-    # Ensure the DMX controller is initialized only once
     dmx = None
     try:
         mp3_file = Path(__file__).with_name("Love Will Keep Us Alive (1999 Remaster).mp3")
@@ -237,7 +221,7 @@ if __name__ == "__main__":
             mp3_path=str(mp3_file),
             dmx=dmx,
             sample_rate=44100,
-            channels=1, # Using 1 channel for simplified analysis and playback
+            channels=1, 
             audio_block=1024,
             chunk_seconds=0.25,
             hop_ratio=0.5,
