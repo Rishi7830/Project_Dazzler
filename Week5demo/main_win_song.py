@@ -1,7 +1,7 @@
 """
 Realtime MP3 -> Feature Analysis + DMX output + Synchronized External Playback
-Uses a two-path system (WSL path for FFmpeg, Windows path for playback)
-and the reliable 'cmd.exe /c start' command to launch the MP3 on the host.
+Uses a controlled synchronization flow to ensure the audio analysis begins 
+shortly after the external music player has time to launch and start playing.
 """
 
 import os
@@ -21,6 +21,7 @@ from color_mapper import map_to_colors
 try:
     from pyserial import SimpleDMX
 except Exception as e:
+    # Print the full warning, as you reported this is still an issue
     print(f"[WARN] Could not import SimpleDMX: {e}. DMX will be simulated.")
     SimpleDMX = None
 
@@ -52,6 +53,8 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9):
         return _NoopDMX()
     port = port or _suggest_default_port()
     try:
+        # Note: If this fails, the controller is using _NoopDMX and the error 
+        # is printed in the terminal, as seen in your previous output.
         dmx = SimpleDMX(port=port)
         dmx.start_broadcast()
         print(f"[DMX] Started real controller on {port} channels={num_channels}")
@@ -69,7 +72,6 @@ def start_external_player(mp3_path_win: str):
     if 'wsl' in platform.platform().lower():
         try:
             # Use 'cmd.exe /c start' to open the file using the Windows default application.
-            # We use Popen with a list for clean argument passing, especially with spaces.
             # The empty string "" after 'start' is crucial to handle paths with spaces correctly.
             subprocess.Popen(['cmd.exe', '/c', 'start', '', mp3_path_win], 
                              stdout=subprocess.DEVNULL, 
@@ -104,15 +106,14 @@ def stream_mp3_realtime(
     save_json: bool = True,
 ):
     """
-    Stream-decode MP3 in real time (using WSL path for FFmpeg), 
-    analyze features, and update DMX lighting.
-    The audio is played externally (using Windows path for playback).
+    Stream-decode MP3 in real time, analyze features, and update DMX lighting.
+    Implements controlled synchronization steps to align analysis with external playback.
     """
     if not Path(mp3_path_wsl).exists():
         print(f"[ERR] File not found by FFmpeg (WSL Path): {mp3_path_wsl}")
         return
 
-    # 1. Setup FFmpeg decoding process
+    # 1. Setup FFmpeg decoding process (INSTANT, NON-BLOCKING START)
     cmd = [
         "ffmpeg",
         "-hide_banner", "-loglevel", "error",
@@ -124,12 +125,13 @@ def stream_mp3_realtime(
     ]
 
     try:
+        # Start the FFmpeg process immediately to minimize delay
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     except FileNotFoundError:
         print("[ERR] ffmpeg not found in PATH; install ffmpeg and retry")
         return
 
-    # 2. 3-2-1 Countdown & DMX Initialization
+    # 2. DMX Countdown
     countdown_colors = [
         (255,   0,   0, 0),  # Red for 3
         (255, 128,   0, 0),  # Orange for 2
@@ -142,15 +144,22 @@ def stream_mp3_realtime(
         print(f"Countdown: {4 - i}")
         time.sleep(1)
         
-    # Start audio playback on the host system immediately after the countdown
-    start_external_player(mp3_path_win) # Windows Player uses the WIN path
+    # 3. Controlled Synchronization Block
+    
+    # Immediately launch the external player right after the countdown.
+    start_external_player(mp3_path_win) 
+
+    # Add the required delay to let the music player application load and start playing.
+    SYNC_DELAY = 2.0 # Wait 2 seconds (1s for requested delay + 1s buffer)
+    print(f"[SYNC] Waiting {SYNC_DELAY:.1f} seconds to allow audio player to initialize...")
+    time.sleep(SYNC_DELAY)
     
     # Set lights to initial black before starting analysis
     dmx.update_lighting((0, 0, 0, 0), hue_speed=0)
-    print("[OK] Starting audio analysis.")
+    print("[OK] Starting synchronized audio analysis.")
 
 
-    # 3. Setup buffers and counters for real-time processing
+    # 4. Start Analysis Loop
     bytes_per_sample = 4
     frame_bytes = audio_block * channels * bytes_per_sample
     chunk_samples = int(chunk_seconds * sample_rate)
@@ -164,6 +173,7 @@ def stream_mp3_realtime(
 
     try:
         while True:
+            # Read audio data from the FFmpeg process's pipe
             raw = proc.stdout.read(frame_bytes)
             
             if not raw or len(raw) < frame_bytes:
@@ -235,13 +245,10 @@ def stream_mp3_realtime(
 if __name__ == "__main__":
     dmx = None
     try:
-        # 1. Define the Windows Absolute Path (for the Player)
-        # We use a raw string (r"...") to avoid issues with backslashes
+        # --- PATH SETUP (DO NOT CHANGE) ---
         mp3_file_win = r"C:\Users\Rishi Moorthy\Desktop\Love Will Keep Us Alive (1999 Remaster).mp3"
-        
-        # 2. Convert to the corresponding WSL Path (for FFmpeg)
-        # This assumes your C drive is mounted at /mnt/c, which is standard in WSL.
         mp3_file_wsl = mp3_file_win.replace("C:", "/mnt/c").replace("\\", "/") 
+        # -----------------------------------
         
         dmx = init_dmx_controller(port="/dev/ttyUSB2", num_channels=9)
         
@@ -266,7 +273,3 @@ if __name__ == "__main__":
             except Exception:
                 pass
         print("[OK] Application finished.")
-
-
-
-
