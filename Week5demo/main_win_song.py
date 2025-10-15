@@ -1,7 +1,6 @@
 """
 Realtime MP3 -> Feature Analysis + DMX output + Synchronized External Playback
-Uses a controlled synchronization flow to ensure the audio analysis begins 
-shortly after the external music player has time to launch and start playing.
+Refined for smoother progress reporting to hide transient analysis speed fluctuations.
 """
 
 import os
@@ -21,7 +20,6 @@ from color_mapper import map_to_colors
 try:
     from pyserial import SimpleDMX
 except Exception as e:
-    # Print the full warning, as you reported this is still an issue
     print(f"[WARN] Could not import SimpleDMX: {e}. DMX will be simulated.")
     SimpleDMX = None
 
@@ -53,8 +51,6 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9):
         return _NoopDMX()
     port = port or _suggest_default_port()
     try:
-        # Note: If this fails, the controller is using _NoopDMX and the error 
-        # is printed in the terminal, as seen in your previous output.
         dmx = SimpleDMX(port=port)
         dmx.start_broadcast()
         print(f"[DMX] Started real controller on {port} channels={num_channels}")
@@ -72,14 +68,12 @@ def start_external_player(mp3_path_win: str):
     if 'wsl' in platform.platform().lower():
         try:
             # Use 'cmd.exe /c start' to open the file using the Windows default application.
-            # The empty string "" after 'start' is crucial to handle paths with spaces correctly.
             subprocess.Popen(['cmd.exe', '/c', 'start', '', mp3_path_win], 
                              stdout=subprocess.DEVNULL, 
                              stderr=subprocess.DEVNULL)
             print(f"[PLAY] Launched external playback via cmd.exe: {mp3_path_win}")
             return True
         except FileNotFoundError as e:
-             # This means cmd.exe or a related Windows component is not found in PATH
              print(f"[FAIL] Could not launch external player via cmd.exe: {e}")
              print("[FAIL] Please start the song manually on your Windows host *now* to sync analysis.")
              return False
@@ -113,7 +107,7 @@ def stream_mp3_realtime(
         print(f"[ERR] File not found by FFmpeg (WSL Path): {mp3_path_wsl}")
         return
 
-    # 1. Setup FFmpeg decoding process (INSTANT, NON-BLOCKING START)
+    # 1. Setup FFmpeg decoding process
     cmd = [
         "ffmpeg",
         "-hide_banner", "-loglevel", "error",
@@ -125,7 +119,6 @@ def stream_mp3_realtime(
     ]
 
     try:
-        # Start the FFmpeg process immediately to minimize delay
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     except FileNotFoundError:
         print("[ERR] ffmpeg not found in PATH; install ffmpeg and retry")
@@ -145,12 +138,10 @@ def stream_mp3_realtime(
         time.sleep(1)
         
     # 3. Controlled Synchronization Block
-    
-    # Immediately launch the external player right after the countdown.
     start_external_player(mp3_path_win) 
 
-    # Add the required delay to let the music player application load and start playing.
-    SYNC_DELAY = 2.0 # Wait 2 seconds (1s for requested delay + 1s buffer)
+    # Wait 2.0 seconds to allow the music player application to load and start playing.
+    SYNC_DELAY = 2.0 
     print(f"[SYNC] Waiting {SYNC_DELAY:.1f} seconds to allow audio player to initialize...")
     time.sleep(SYNC_DELAY)
     
@@ -168,12 +159,12 @@ def stream_mp3_realtime(
     results = []
 
     start_time = time.time()
+    print_interval = 20 # Print every 20 analysis windows (20 * 0.5 * 0.25s = 2.5s real time)
 
     print(f"[RUN] Streaming {mp3_path_wsl} at {sample_rate} Hz - chunk={chunk_seconds}s, hop={hop_ratio}")
 
     try:
         while True:
-            # Read audio data from the FFmpeg process's pipe
             raw = proc.stdout.read(frame_bytes)
             
             if not raw or len(raw) < frame_bytes:
@@ -186,10 +177,7 @@ def stream_mp3_realtime(
 
             # --- REAL-TIME ANALYSIS ---
             while analysis_buffer.size >= chunk_samples:
-                elapsed = time.time() - start_time
-                if len(results) % 10 == 0:
-                    print(f"Progress: {elapsed:.2f} seconds")
-
+                # --- Analysis Execution ---
                 window = analysis_buffer[:chunk_samples]
                 mode, key = detect_mode_key(window, sample_rate)
                 tempo = detect_tempo(window, sample_rate)
@@ -204,9 +192,10 @@ def stream_mp3_realtime(
                 rgbw = (int(r), int(g), int(b), 0) 
                 dmx.update_lighting(rgbw, hue_speed)
 
-                # Save results
+                # Save results (using the number of windows processed)
+                current_time_pos = (len(results) * hop_samples) / sample_rate
                 results.append({
-                    "time_position": (len(results) * hop_samples) / sample_rate,
+                    "time_position": current_time_pos,
                     "features": {
                         "mode": mode, "key": key, "tempo": float(tempo), "loudness": float(loudness)
                     },
@@ -214,6 +203,11 @@ def stream_mp3_realtime(
                         "color": color_name, "rgbw": rgbw, "hue_speed": float(hue_speed)
                     }
                 })
+
+                # --- SMOOTHER PROGRESS REPORTING ---
+                if len(results) % print_interval == 0:
+                    print(f"Progress: {current_time_pos:.2f} seconds")
+
 
                 # Advance buffer by the hop size
                 analysis_buffer = analysis_buffer[hop_samples:]
@@ -246,7 +240,9 @@ if __name__ == "__main__":
     dmx = None
     try:
         # --- PATH SETUP (DO NOT CHANGE) ---
+        # Windows Path for the Player
         mp3_file_win = r"C:\Users\Rishi Moorthy\Desktop\Love Will Keep Us Alive (1999 Remaster).mp3"
+        # WSL Path for FFmpeg to read the file
         mp3_file_wsl = mp3_file_win.replace("C:", "/mnt/c").replace("\\", "/") 
         # -----------------------------------
         
