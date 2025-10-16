@@ -30,10 +30,10 @@ def _suggest_default_port() -> str:
     """Suggests the default DMX port based on OS."""
     sysname = platform.system().lower()
     if sysname.startswith("win"):
-        return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB2")
+        return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB0")
     if sysname == "darwin":
         return os.environ.get("DAZZLER_DMX_PORT", "/dev/tty.usbserial")
-    return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB2")
+    return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB0")
 
 
 class _NoopDMX:
@@ -250,7 +250,7 @@ if __name__ == "__main__":
         mp3_file_wsl = mp3_file_win.replace("C:", "/mnt/c").replace("\\", "/") 
         # -----------------------------------
         
-        dmx = init_dmx_controller(port="/dev/ttyUSB2", num_channels=9)
+        dmx = init_dmx_controller(port="/dev/ttyUSB0", num_channels=9)
         
         stream_mp3_realtime(
             mp3_path_wsl=mp3_file_wsl,
@@ -273,3 +273,4 @@ if __name__ == "__main__":
             except Exception:
                 pass
         print("[OK] Application finished.")
+
