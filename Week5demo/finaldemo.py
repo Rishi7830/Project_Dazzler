@@ -1,7 +1,6 @@
 """
 Realtime MP3 → Feature Analysis + DMX output.
-DYNAMIC & REAL-TIME SYNCHRONIZED VERSION.
-FIXED: Synchronization logic repositioned for stable real-time second counting.
+FINAL VERSION: Includes Real-Time Synchronization and Loudness-Based Color Mapping.
 """
 
 import os
@@ -9,8 +8,9 @@ import time
 import platform
 import subprocess
 import json
-from pathlib import Path
 import numpy as np
+import traceback
+from pathlib import Path
 
 # Import your custom feature modules
 from tempo_detection import detect_tempo
@@ -18,11 +18,10 @@ from loudness_detection import detect_loudness
 from mode_key_detection import detect_mode_key
 from audio_analyzer import process_audio_features
 
-# Import only necessary functions from color_mapper
-from color_mapper import get_available_genres, genre_color_palettes 
+# Import all necessary functions from color_mapper, including the new mapping function
+from color_mapper import get_available_genres, genre_color_palettes, map_features_to_genre_color
 
 try:
-    # Ensure pyserial and SimpleDMX are installed/accessible
     from pyserial import SimpleDMX
 except Exception as e:
     print(f"[WARN] Could not import SimpleDMX: {e}")
@@ -95,37 +94,6 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9):
         print(f"[DMX] Could not open {port}: {e} -> using noop")
         return _NoopDMX()
 
-# ====================================================================
-# SIMPLIFIED COLOR MAPPING FUNCTION (Mood Logic Removed)
-# ====================================================================
-
-def map_features_to_genre_color(feature_output, genre):
-    """
-    Maps a feature output to a color from the genre's palette.
-    """
-    
-    palette = genre_color_palettes.get(genre, genre_color_palettes["pop"])
-    palette_len = len(palette)
-    
-    try:
-        # Use a simple cycle based on a hash/value of the feature output to pick a color
-        if isinstance(feature_output, tuple) or isinstance(feature_output, list):
-             # Use the first element's value for a cycling index
-             # Convert to float first in case it's a list of numpy floats
-             index = int(float(feature_output[0]) * 100) % palette_len
-        elif isinstance(feature_output, str):
-             # Hash string features for a deterministic index
-             index = hash(feature_output) % palette_len
-        else:
-             # If it's a simple number (like a simplified tempo/loudness index)
-             index = int(feature_output) % palette_len
-             
-    except Exception:
-        # Fallback to cycling slowly based on wall clock if features are complex or invalid
-        index = int(time.time() * 2) % palette_len 
-        
-    return palette[index]
-
 
 # ====================================================================
 # REAL-TIME STREAMING AND ANALYSIS (WITH TIMING CORRECTION)
@@ -187,8 +155,7 @@ def stream_mp3_realtime(
             if not raw or len(raw) < frame_bytes:
                 break
             
-            # **Stabilization Sleep:** Give the OS/FFmpeg process a moment.
-            # This can help prevent the analysis from drastically running ahead.
+            # Stabilization Sleep: A tiny pause to help OS/FFmpeg sync
             time.sleep(0.001) 
 
             block = np.frombuffer(raw, dtype=np.float32)
@@ -200,7 +167,6 @@ def stream_mp3_realtime(
                 time_position = (len(results) * hop_samples) / sample_rate
                 
                 # --- CRITICAL SYNCHRONIZATION BLOCK ---
-                # Check how much wall clock time has actually elapsed
                 actual_elapsed_time = time.time() - start_time
                 sleep_needed = time_position - actual_elapsed_time
                 
@@ -216,11 +182,14 @@ def stream_mp3_realtime(
                 tempo = detect_tempo(window, sample_rate)
                 loudness = detect_loudness(window, sample_rate)
 
+                # NOTE: process_audio_features MUST return TWO values: (feature_output, hue_speed)
                 feature_output, hue_speed = process_audio_features(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
                 
-                mapped_rgb = map_features_to_genre_color(feature_output, genre)
+                # Use the calculated features to select a color from the genre's palette
+                # The map_features_to_genre_color function is imported from color_mapper.py
+                mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
                 
                 r, g, b = mapped_rgb
                 rgbw = (int(r), int(g), int(b), 0) 
@@ -229,6 +198,7 @@ def stream_mp3_realtime(
                 dmx.update_lighting(rgbw, hue_speed)
                 
                 # --- Logging & Data Recording ---
+                # The time_position variable is correctly calculated based on results length and hop size
                 print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Feature:{str(feature_output):12s} -> RGB{rgbw[:3]}")
 
                 results.append({
@@ -265,7 +235,6 @@ def stream_mp3_realtime(
     except Exception as e:
         print(f"[ERR] Runtime Exception: {e}")
         proc.kill()
-        import traceback
         traceback.print_exc()
     finally:
         pass
