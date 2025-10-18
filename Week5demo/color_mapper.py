@@ -21,62 +21,61 @@ genre_color_palettes = {
 
 # ====================================================================
 # FEATURE-BASED COLOR MAPPING (LOUDNESS-BASED CYCLE)
-# This function is now the central logic for color selection in main.py
 # ====================================================================
 
 def map_features_to_genre_color(loudness, tempo, genre):
     """
     Maps music features to a color from the genre's palette based on loudness.
     
-    The color changes across the palette based on the current loudness level,
-    since the tempo detection was initially unreliable in the short windows.
+    The color changes across the palette based on the current loudness level.
+    NOTE: Loudness is expected to be in negative dBFS (e.g., -60.0 to 0.0).
     """
     
     palette = genre_color_palettes.get(genre, genre_color_palettes["pop"])
     palette_len = len(palette)
     
-    # Define a maximum loudness value for normalization. 
-    # Max loudness for professional audio is usually around 0 dB, but streamed/uncompressed
-    # data often lives in a range (e.g., -60dB to 0dB, but relative loudness is what matters).
-    # Using 60.0 dB as a safe, generous max for mapping indices.
-    MAX_LOUDNESS = 60.0 
+    # Define the dB range that maps to the color indices
+    # We define a common range for music: -50dB (very quiet) to -5dB (loudest peak)
+    QUIETEST_DB = -50.0 
+    LOUDEST_DB = -5.0   
     
     try:
-        # Prevent negative loudness values
-        safe_loudness = max(0, loudness)
+        # 1. Clip the incoming loudness to the defined range
+        clipped_loudness = max(QUIETEST_DB, min(LOUDEST_DB, loudness))
+
+        # 2. Normalize the clipped loudness to a 0.0 to 1.0 range
+        # We shift the negative range to a positive scale (0=quietest, 1=loudest)
+        loudness_range = LOUDEST_DB - QUIETEST_DB # Example: -5 - (-50) = 45.0
+        normalized_value = (clipped_loudness - QUIETEST_DB) / loudness_range
         
-        # Calculate the loudness step value for each color in the palette
-        # e.g., for 5 colors and 60 max dB, each step is 12 dB.
-        loudness_step = MAX_LOUDNESS / palette_len
+        # 3. Scale the normalized value to the palette index range [0, palette_len - 1]
+        index = int(normalized_value * (palette_len - 1))
         
-        # Determine the color index by finding which step the loudness falls into
-        index = int(safe_loudness / loudness_step)
-        
-        # Ensure the index is within the valid range [0, palette_len - 1]
+        # Ensure the index is within the valid range
         index = min(index, palette_len - 1)
-        
-    except Exception:
+            
+    except Exception as e:
+        print(f"[ERR] Color mapping logic failed: {e}")
         # Fallback to the first color if any calculation fails
         index = 0
-        
+            
     return palette[index]
 
 # ====================================================================
-# UTILITY FUNCTIONS (Simplified)
-# The unused functions (color_distance, closest_color, map_mood_to_genre_color, etc.)
-# have been removed as they are no longer needed for the simplified logic.
+# UTILITY FUNCTIONS 
 # ====================================================================
 
 def get_energy_level(loudness_db):
-    """Map loudness (dB) to energy level for lighting intensity."""
-    # Assuming the input loudness_db is relative (e.g., max is around 40-50 dB in logs)
-    # The logic in main.py passes the raw loudness detected from the chunk.
-    # We will keep the thresholds general.
-    if loudness_db > 40: # High volume
+    """
+    Map loudness (dB) to an energy level. 
+    NOTE: This function needs to use the same dB range definition as the mapper.
+    """
+    # Use thresholds consistent with the -50.0 to -5.0 dBFS range
+    if loudness_db > -10.0: 
         return "high"
-    elif loudness_db > 20: # Medium volume
+    elif loudness_db > -25.0: 
         return "medium"
-    else:
+    else: 
         return "low"
 
 def get_brightness_from_energy(energy_level):
@@ -102,7 +101,7 @@ def preview_genre_palette(genre):
     if genre not in genre_color_palettes:
         print(f"Genre '{genre}' not found.")
         return
-    
+        
     palette = genre_color_palettes[genre]
     print(f"\nColor palette for '{genre}':")
     for i, color in enumerate(palette, 1):
@@ -110,17 +109,23 @@ def preview_genre_palette(genre):
         print(f"  {i}. RGB{color} -> {hex_color}")
 
 if __name__ == "__main__":
-    # Test the new color mapping function logic with sample loudness values
+    # Test the new color mapping logic with realistic negative loudness values
     test_genre = "soul"
     preview_genre_palette(test_genre)
 
-    print("\n=== Testing Loudness-Based Color Mapping ===")
+    print("\n=== Testing Loudness-Based Color Mapping (Negative dB) ===")
     
-    # Loudness mapping steps for 5 colors, 60 MAX_LOUDNESS: 0-11, 12-23, 24-35, 36-47, 48-60
+    # Range is -50.0 to -5.0. 5 colors means steps are 45/4 = 11.25 apart (approx)
     test_loudness_values = [
-        0.0, 11.0, 12.0, 25.0, 36.5, 59.9, 80.0 # Test low, boundary, high, and overflow
+        -60.0, # Too quiet -> maps to index 0
+        -48.0, # Quiet -> maps to index 0
+        -30.0, # Medium-Quiet -> maps to index 1 or 2
+        -15.0, # Medium-Loud -> maps to index 3
+        -6.0,  # Loud -> maps to index 4
+        0.0    # Too loud -> maps to index 4
     ]
     
     for loudness in test_loudness_values:
+        # Note: Tempo is passed but unused in this version
         mapped_color = map_features_to_genre_color(loudness=loudness, tempo=0, genre=test_genre)
-        print(f"Loudness: {loudness:4.1f} dB -> Mapped Color: RGB{mapped_color} -> {rgb_to_hex(mapped_color)}")
+        print(f"Loudness: {loudness:5.1f} dB -> Mapped Color: RGB{mapped_color} -> Index:{genre_color_palettes[test_genre].index(mapped_color)}")
