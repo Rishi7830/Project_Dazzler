@@ -96,7 +96,7 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9):
 
 
 # ====================================================================
-# REAL-TIME STREAMING AND ANALYSIS (WITH TIMING CORRECTION)
+# REAL-TIME STREAMING AND ANALYSIS (OPTIMIZED TIMING)
 # ====================================================================
 
 def stream_mp3_realtime(
@@ -107,7 +107,7 @@ def stream_mp3_realtime(
     channels: int = 1,
     audio_block: int = 1024,
     chunk_seconds: float = 0.25,
-    hop_ratio: float = 0.5,
+    hop_ratio: float = 0.4, # OPTIMIZED: Reduced for faster feeling updates
     save_json: bool = True,
 ):
     """
@@ -140,7 +140,8 @@ def stream_mp3_realtime(
     bytes_per_sample = 4
     frame_bytes = audio_block * channels * bytes_per_sample
     chunk_samples = int(chunk_seconds * sample_rate)
-    hop_samples = max(1, int(chunk_samples * hop_ratio))
+    # Recalculate hop_samples using the optimized hop_ratio
+    hop_samples = max(1, int(chunk_samples * hop_ratio)) 
     analysis_buffer = np.empty(0, dtype=np.float32)
     results = []
     
@@ -170,7 +171,8 @@ def stream_mp3_realtime(
                 actual_elapsed_time = time.time() - start_time
                 sleep_needed = time_position - actual_elapsed_time
                 
-                if sleep_needed > 0.005: # Only sleep if we are significantly ahead (>5ms)
+                # OPTIMIZED: Relaxed the threshold to 0.01 seconds (10ms)
+                if sleep_needed > 0.01: 
                     # If analysis is ahead of the music, pause to synchronize
                     time.sleep(sleep_needed)
                 # -------------------------------------
@@ -188,7 +190,6 @@ def stream_mp3_realtime(
                 )
                 
                 # Use the calculated features to select a color from the genre's palette
-                # The map_features_to_genre_color function is imported from color_mapper.py
                 mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
                 
                 r, g, b = mapped_rgb
@@ -198,7 +199,6 @@ def stream_mp3_realtime(
                 dmx.update_lighting(rgbw, hue_speed)
                 
                 # --- Logging & Data Recording ---
-                # The time_position variable is correctly calculated based on results length and hop size
                 print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Feature:{str(feature_output):12s} -> RGB{rgbw[:3]}")
 
                 results.append({
@@ -263,7 +263,7 @@ if __name__ == "__main__":
             dmx=dmx,
             genre=selected_genre,
             chunk_seconds=0.25,
-            hop_ratio=0.5,
+            hop_ratio=0.4, # Passing the new optimized hop ratio
         )
     finally:
         # 4. Clean up DMX
