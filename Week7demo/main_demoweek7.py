@@ -173,7 +173,7 @@ def adaptive_lighting_step(dmx, genre, mood, base_color_rgb, loudness_db, energy
     hue = (np.sin(phase) * 0.5 + 0.5)  # 0..1
 
     # Incorporate rhythm to create pulsing (on-beat emphasis)
-    pulse = 0.5 + 0.5 * np.sin(2.0 * np.pi * rhythm_norm * (time.time() % max(1.0, (60.0 / max(tempo_bpm, 1.0))))))
+    pulse = 0.5 + 0.5 * np.sin(2.0 * np.pi * rhythm_norm * (time.time() % max(1.0, (60.0 / max(tempo_bpm, 1.0)))))
     pulse = np.clip(pulse, 0.0, 1.0)
 
     # overall brightness = loudness-derived * energy multiplier * pulse smoothing
@@ -359,4 +359,5 @@ if __name__ == "__main__":
 
 if __name__ == "__main__":
     main()
+
 
