@@ -96,7 +96,7 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9):
 
 
 # ====================================================================
-# REAL-TIME STREAMING AND ANALYSIS (OPTIMIZED TIMING)
+# REAL-TIME STREAMING AND ANALYSIS (AGGRESSIVELY OPTIMIZED TIMING)
 # ====================================================================
 
 def stream_mp3_realtime(
@@ -107,7 +107,7 @@ def stream_mp3_realtime(
     channels: int = 1,
     audio_block: int = 1024,
     chunk_seconds: float = 0.25,
-    hop_ratio: float = 0.4, # OPTIMIZED: Reduced for faster feeling updates
+    hop_ratio: float = 0.25, # AGGRESSIVELY OPTIMIZED
     save_json: bool = True,
 ):
     """
@@ -140,7 +140,7 @@ def stream_mp3_realtime(
     bytes_per_sample = 4
     frame_bytes = audio_block * channels * bytes_per_sample
     chunk_samples = int(chunk_seconds * sample_rate)
-    # Recalculate hop_samples using the optimized hop_ratio
+    # Recalculate hop_samples using the aggressive hop_ratio
     hop_samples = max(1, int(chunk_samples * hop_ratio)) 
     analysis_buffer = np.empty(0, dtype=np.float32)
     results = []
@@ -156,8 +156,7 @@ def stream_mp3_realtime(
             if not raw or len(raw) < frame_bytes:
                 break
             
-            # Stabilization Sleep: A tiny pause to help OS/FFmpeg sync
-            time.sleep(0.001) 
+            # Stabilization Sleep REMOVED (0.001s sleep removed for max speed)
 
             block = np.frombuffer(raw, dtype=np.float32)
             analysis_buffer = np.concatenate((analysis_buffer, block))
@@ -171,7 +170,7 @@ def stream_mp3_realtime(
                 actual_elapsed_time = time.time() - start_time
                 sleep_needed = time_position - actual_elapsed_time
                 
-                # OPTIMIZED: Relaxed the threshold to 0.01 seconds (10ms)
+                # Sleep threshold remains at 0.01 seconds (10ms)
                 if sleep_needed > 0.01: 
                     # If analysis is ahead of the music, pause to synchronize
                     time.sleep(sleep_needed)
@@ -263,7 +262,7 @@ if __name__ == "__main__":
             dmx=dmx,
             genre=selected_genre,
             chunk_seconds=0.25,
-            hop_ratio=0.4, # Passing the new optimized hop ratio
+            hop_ratio=0.25, # Using the aggressive hop ratio
         )
     finally:
         # 4. Clean up DMX
