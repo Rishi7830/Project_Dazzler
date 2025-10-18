@@ -1,6 +1,6 @@
 """
 Realtime MP3 → Feature Analysis + DMX output.
-FINAL VERSION: Includes Real-Time Synchronization and Loudness-Based Color Mapping.
+FINAL VERSION: Optimized for stable real-time performance (1.0s update interval).
 """
 
 import os
@@ -18,11 +18,12 @@ from loudness_detection import detect_loudness
 from mode_key_detection import detect_mode_key
 from audio_analyzer import process_audio_features
 
-# Import all necessary functions from color_mapper, including the new mapping function
-from color_mapper import get_available_genres, genre_color_palettes, map_features_to_genre_color
+# Import all necessary functions from color_mapper
+from color_mapper import get_available_genres, map_features_to_genre_color
 
 try:
-    from pyserial import SimpleDMX
+    # Use SimpleDMX for actual DMX hardware communication
+    from pyserial import SimpleDMX 
 except Exception as e:
     print(f"[WARN] Could not import SimpleDMX: {e}")
     SimpleDMX = None
@@ -96,7 +97,7 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9):
 
 
 # ====================================================================
-# REAL-TIME STREAMING AND ANALYSIS (WITH TIMING CORRECTION)
+# REAL-TIME STREAMING AND ANALYSIS (COMPUTATIONALLY OPTIMIZED)
 # ====================================================================
 
 def stream_mp3_realtime(
@@ -106,8 +107,8 @@ def stream_mp3_realtime(
     sample_rate: int = 44100,
     channels: int = 1,
     audio_block: int = 1024,
-    chunk_seconds: float = 0.25,
-    hop_ratio: float = 0.5,
+    chunk_seconds: float = 2.0, # Analysis window: 2.0s (Recommended for CPU-heavy tasks)
+    hop_ratio: float = 0.5,     # Update frequency: 50% overlap, 1.0s effective update
     save_json: bool = True,
 ):
     """
@@ -140,13 +141,14 @@ def stream_mp3_realtime(
     bytes_per_sample = 4
     frame_bytes = audio_block * channels * bytes_per_sample
     chunk_samples = int(chunk_seconds * sample_rate)
-    hop_samples = max(1, int(chunk_samples * hop_ratio))
+    # 2.0s chunk * 0.5 hop_ratio = 1.0s effective update interval
+    hop_samples = max(1, int(chunk_samples * hop_ratio)) 
     analysis_buffer = np.empty(0, dtype=np.float32)
     results = []
     
-    start_time = time.time() # Capture the exact moment the stream begins
+    start_time = time.time() 
     
-    print(f"[RUN] Streaming {Path(mp3_path).name} ({genre.title()}) - chunk={chunk_seconds}s, hop={hop_ratio}")
+    print(f"[RUN] Streaming {Path(mp3_path).name} ({genre.title()}) - chunk={chunk_seconds}s, hop={hop_ratio} (1.0s effective update)")
 
     try:
         while True:
@@ -155,9 +157,6 @@ def stream_mp3_realtime(
             if not raw or len(raw) < frame_bytes:
                 break
             
-            # Stabilization Sleep: A tiny pause to help OS/FFmpeg sync
-            time.sleep(0.001) 
-
             block = np.frombuffer(raw, dtype=np.float32)
             analysis_buffer = np.concatenate((analysis_buffer, block))
 
@@ -170,8 +169,8 @@ def stream_mp3_realtime(
                 actual_elapsed_time = time.time() - start_time
                 sleep_needed = time_position - actual_elapsed_time
                 
-                if sleep_needed > 0.005: # Only sleep if we are significantly ahead (>5ms)
-                    # If analysis is ahead of the music, pause to synchronize
+                if sleep_needed > 0.01: 
+                    # Pause to synchronize with real-time audio position
                     time.sleep(sleep_needed)
                 # -------------------------------------
                 
@@ -179,17 +178,18 @@ def stream_mp3_realtime(
                 
                 # --- Feature Extraction & Lighting Decision ---
                 mode, key = detect_mode_key(window, sample_rate)
-                tempo = detect_tempo(window, sample_rate)
+                tempo = detect_tempo(window, sample_rate) # RE-ENABLED
                 loudness = detect_loudness(window, sample_rate)
 
-                # NOTE: process_audio_features MUST return TWO values: (feature_output, hue_speed)
+                # Process features to get a light 'action' and 'speed'
                 feature_output, hue_speed = process_audio_features(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
                 
-                # Use the calculated features to select a color from the genre's palette
-                # The map_features_to_genre_color function is imported from color_mapper.py
-                mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
+                # Map features to color
+                mapped_rgb = map_features_to_genre_color(
+                    loudness=loudness, tempo=tempo, mode=mode, key=key, genre=genre
+                )
                 
                 r, g, b = mapped_rgb
                 rgbw = (int(r), int(g), int(b), 0) 
@@ -198,7 +198,6 @@ def stream_mp3_realtime(
                 dmx.update_lighting(rgbw, hue_speed)
                 
                 # --- Logging & Data Recording ---
-                # The time_position variable is correctly calculated based on results length and hop size
                 print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Feature:{str(feature_output):12s} -> RGB{rgbw[:3]}")
 
                 results.append({
@@ -245,11 +244,16 @@ if __name__ == "__main__":
     # 1. Get User Inputs
     selected_genre, mp3_file_path, dmx_port = get_user_inputs()
     
+    # Configuration calculation for display
+    CHUNK = 2.0
+    HOP_RATIO = 0.5
+    update_interval = CHUNK * HOP_RATIO
+    
     print("\n--- Configuration Summary ---")
     print(f"Genre: {selected_genre.title()}")
     print(f"File: {mp3_file_path}")
     print(f"DMX Port: {dmx_port}")
-    print(f"Update Rate: {0.25} seconds (Responsive)")
+    print(f"Update Rate: {update_interval} seconds (Optimized for Stability)") 
     print("-----------------------------\n")
 
     # 2. Initialize DMX
@@ -262,8 +266,8 @@ if __name__ == "__main__":
             mp3_path=mp3_file_path,
             dmx=dmx,
             genre=selected_genre,
-            chunk_seconds=0.25,
-            hop_ratio=0.5,
+            chunk_seconds=CHUNK, 
+            hop_ratio=HOP_RATIO,     
         )
     finally:
         # 4. Clean up DMX
