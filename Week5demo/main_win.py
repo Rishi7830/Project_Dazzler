@@ -178,7 +178,7 @@ def stream_mp3_realtime(
 
 
 if __name__ == "__main__":
-    mp3_file = Path(__file__).with_name("Love Will Keep Us Alive (1999 Remaster).mp3")
+    mp3_file = Path(__file__).with_name("Celebration_Of_Varisu.mp3") #chnaged song name
     dmx = init_dmx_controller(port="/dev/ttyUSB0", num_channels=9) #changed from None to the USB0
     stream_mp3_realtime(
         mp3_path=str(mp3_file),
