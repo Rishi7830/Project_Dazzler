@@ -12,17 +12,17 @@ import numpy as np
 import traceback
 from pathlib import Path
 
-# Import your custom feature modules
-from tempo_detection import detect_tempo
-from loudness_detection import detect_loudness
+# --- Import your custom feature modules (NOW FIXED AND RELIABLE) ---
+from tempo_final import detect_tempo
+from loudness_final import detect_loudness
 from mode_key_detection import detect_mode_key
-from audio_analyzer import process_audio_features
+from audio_analyzer import process_audio_features # Handles Feature-to-Action mapping
 
 # Import all necessary functions from color_mapper
-from color_mapper import get_available_genres, map_features_to_genre_color
+from color_mapper import get_available_genres, map_features_to_genre_color # Handles Feature-to-Color mapping
 
+# DMX setup (using a mock class if SimpleDMX is unavailable)
 try:
-    # Use SimpleDMX for actual DMX hardware communication
     from pyserial import SimpleDMX 
 except Exception as e:
     print(f"[WARN] Could not import SimpleDMX: {e}")
@@ -76,11 +76,13 @@ def _suggest_default_port() -> str:
 
 
 class _NoopDMX:
+    """Mock DMX class for when hardware is not connected."""
     def start_broadcast(self): print("[DMX] Broadcast disabled (no hardware)")
     def stop_broadcast(self): pass
     def close(self): pass
     def update_lighting(self, rgbw_tuple, hue_speed):
-        print(f"[DMX] (noop) R{rgbw_tuple[0]} G{rgbw_tuple[1]} B{rgbw_tuple[2]} W{rgbw_tuple[3]} speed={hue_speed:.2f}")
+        r, g, b, w = rgbw_tuple
+        print(f"[{time.time():.2f}] [DMX_MOCK] R{r:3} G{g:3} B{b:3} W{w:3} speed={hue_speed:.2f}")
 
 def init_dmx_controller(port: str | None = None, num_channels: int = 9):
     if SimpleDMX is None:
@@ -106,8 +108,8 @@ def stream_mp3_realtime(
     genre: str,
     sample_rate: int = 44100,
     channels: int = 1,
-    audio_block: int = 1024,
-    chunk_seconds: float = 2.0, # Analysis window: 2.0s (Recommended for CPU-heavy tasks)
+    audio_block: int = 1024, # Read size from ffmpeg pipe
+    chunk_seconds: float = 2.0, # Analysis window: 2.0s (Key to lag fix)
     hop_ratio: float = 0.5,     # Update frequency: 50% overlap, 1.0s effective update
     save_json: bool = True,
 ):
@@ -120,6 +122,7 @@ def stream_mp3_realtime(
         print(f"[ERR] File not found: {mp3_path}")
         return
 
+    # FFMPEG Command: Decodes MP3 to raw float32le audio data
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", mp3_path,
         "-f", "f32le", "-ac", str(channels), "-ar", str(sample_rate), "pipe:1",
@@ -131,28 +134,28 @@ def stream_mp3_realtime(
         print("[ERR] ffmpeg not found in PATH; install ffmpeg and retry")
         return
 
-    # 3-2-1 countdown
+    # Countdown to give time for DMX initialization
     countdown_colors = [(255, 0, 0, 0), (255, 128, 0, 0), (255, 255, 0, 0)]
+    print("\n--- Starting in 3 seconds ---")
     for i, color in enumerate(reversed(countdown_colors), start=1):
         dmx.update_lighting(color, hue_speed=0)
-        print(f"Countdown: {4 - i}")
+        print(f"Counting down: {4 - i}...")
         time.sleep(1)
 
     bytes_per_sample = 4
     frame_bytes = audio_block * channels * bytes_per_sample
     chunk_samples = int(chunk_seconds * sample_rate)
-    # 2.0s chunk * 0.5 hop_ratio = 1.0s effective update interval
     hop_samples = max(1, int(chunk_samples * hop_ratio)) 
     analysis_buffer = np.empty(0, dtype=np.float32)
     results = []
     
     start_time = time.time() 
     
-    print(f"[RUN] Streaming {Path(mp3_path).name} ({genre.title()}) - chunk={chunk_seconds}s, hop={hop_ratio} (1.0s effective update)")
+    print(f"\n[RUN] Streaming {Path(mp3_path).name} ({genre.title()}) - Update Rate: {chunk_seconds * hop_ratio:.1f}s")
 
     try:
         while True:
-            # 1. Read a block from ffmpeg
+            # 1. Read a small block from ffmpeg
             raw = proc.stdout.read(frame_bytes)
             if not raw or len(raw) < frame_bytes:
                 break
@@ -160,45 +163,46 @@ def stream_mp3_realtime(
             block = np.frombuffer(raw, dtype=np.float32)
             analysis_buffer = np.concatenate((analysis_buffer, block))
 
+            # 2. Process windows as they become available
             while analysis_buffer.size >= chunk_samples:
                 
                 # Calculate the IDEAL time position for this analysis window
                 time_position = (len(results) * hop_samples) / sample_rate
                 
                 # --- CRITICAL SYNCHRONIZATION BLOCK ---
+                # This ensures analysis runs in real-time without building up lag.
                 actual_elapsed_time = time.time() - start_time
                 sleep_needed = time_position - actual_elapsed_time
                 
-                if sleep_needed > 0.01: 
-                    # Pause to synchronize with real-time audio position
+                if sleep_needed > 0.005: # Sleep if more than 5ms ahead of schedule
                     time.sleep(sleep_needed)
                 # -------------------------------------
                 
                 window = analysis_buffer[:chunk_samples]
                 
-                # --- Feature Extraction & Lighting Decision ---
+                # --- 3. Feature Extraction (The now-fixed core logic) ---
                 mode, key = detect_mode_key(window, sample_rate)
-                tempo = detect_tempo(window, sample_rate) # RE-ENABLED
-                loudness = detect_loudness(window, sample_rate)
+                tempo = detect_tempo(window, sample_rate) 
+                loudness = detect_loudness(window, sample_rate) # Should now be -dBFS!
 
-                # Process features to get a light 'action' and 'speed'
+                # --- 4. Decision & Mapping ---
                 feature_output, hue_speed = process_audio_features(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
                 
-                # Map features to color
                 mapped_rgb = map_features_to_genre_color(
                     loudness=loudness, tempo=tempo, mode=mode, key=key, genre=genre
                 )
                 
                 r, g, b = mapped_rgb
+                # We use W=0 for simplicity, assuming RGB fixture (can be changed later)
                 rgbw = (int(r), int(g), int(b), 0) 
                 
-                # --- DMX Output ---
+                # --- 5. DMX Output ---
                 dmx.update_lighting(rgbw, hue_speed)
                 
-                # --- Logging & Data Recording ---
-                print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Feature:{str(feature_output):12s} -> RGB{rgbw[:3]}")
+                # --- 6. Logging (Verify correct -dB values now) ---
+                print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Mode:{mode:6s} | Key:{key:5s} -> RGB{rgbw[:3]}")
 
                 results.append({
                     "time_position": time_position,
@@ -210,11 +214,13 @@ def stream_mp3_realtime(
                     }
                 })
 
+                # Move the buffer by the hop size
                 analysis_buffer = analysis_buffer[hop_samples:]
 
         proc.stdout.close()
         proc.wait()
 
+        # Save analysis data
         if save_json and results:
             out_dir = Path(__file__).parent / "outputs"
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -253,7 +259,7 @@ if __name__ == "__main__":
     print(f"Genre: {selected_genre.title()}")
     print(f"File: {mp3_file_path}")
     print(f"DMX Port: {dmx_port}")
-    print(f"Update Rate: {update_interval} seconds (Optimized for Stability)") 
+    print(f"Analysis Window: {CHUNK}s | Update Interval: {update_interval}s") 
     print("-----------------------------\n")
 
     # 2. Initialize DMX
@@ -261,7 +267,7 @@ if __name__ == "__main__":
     
     # 3. Run Stream
     try:
-        input("Press Enter to start the music and lighting show...")
+        input("Press [ENTER] to start the music and lighting show... (Ctrl+C to stop)\n")
         stream_mp3_realtime(
             mp3_path=mp3_file_path,
             dmx=dmx,
@@ -274,3 +280,4 @@ if __name__ == "__main__":
         dmx.stop_broadcast()
         dmx.close()
         print("\n[END] DMX broadcast stopped and port closed.")
+
