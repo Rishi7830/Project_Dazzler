@@ -1,12 +1,12 @@
-# main.py — Feature-driven adaptive lighting using your pipeline & SimpleDMX
 import os
 from pathlib import Path
 import time
 import librosa
 import numpy as np
+import csv
 import threading
 import queue
-from pyserial import SimpleDMX  # your provided DMX class
+from pyserial import SimpleDMX  # Changed from pyserial
 
 from Buffer_Manager_Week7 import AudioBuffer
 from Mode_Extraction_Week7 import detect_mode_key
@@ -15,32 +15,20 @@ from Loudness_detection_Week7 import detect_loudness
 from Rhythm_Detection_Week7 import extract_rhythm
 from Harmony_detection_Week7 import extract_harmony
 from KNN_Week7 import preprocess_features, predict_mood
-from mood_color_map import map_mood_to_genre_color, get_energy_level, get_brightness_from_energy
+from color_mapper import map_features_to_genre_color, get_energy_level, get_brightness_from_energy
 
-# -------------------------
-# CONFIG
-# -------------------------
 SR = 44100
 WINDOW_SEC = 5.0
 HOP_SEC = 2.5
 WINDOW_SIZE = int(WINDOW_SEC * SR)
 HOP_SIZE = int(HOP_SEC * SR)
-LOUDNESS_HIGH_THRESHOLD = -20
-LOUDNESS_LOW_THRESHOLD = -40
+UPDATE_INTERVAL = 0.5  # Only update DMX every 0.5s to prevent flicker
 
-# smoothing / interpolation factor for color transitions (0..1)
-COLOR_LERP_FACTOR = 0.25
-
-# -------------------------
-# Helpers
-# -------------------------
 def get_user_inputs():
     print("=== Music-to-Light System ===")
-    genres = ["classical", "rock", "blues", "hip hop and rap", "soul", "indie",
-              "country", "gospel", "jazz", "folk", "electronics and dance",
-              "latin", "metal", "pop", "reggae"]
-    for i, g in enumerate(genres, 1):
-        print(f"{i}. {g}")
+    genres = get_available_genres()
+    for i, genre in enumerate(genres, 1):
+        print(f"{i}. {genre}")
     while True:
         try:
             choice = int(input(f"\nSelect genre (1-{len(genres)}): "))
@@ -57,147 +45,63 @@ def get_user_inputs():
             break
         else:
             print("File not found. Please enter a valid path.")
-    dmx_port = input("\nEnter DMX port (default: /dev/ttyUSB0): ").strip() or "/dev/ttyUSB0"
+    dmx_port = input("\nEnter DMX port (default: COM14): ").strip() or "COM14"
     return selected_genre, filepath, dmx_port
 
+def save_moods_to_csv(mood_list, filename):
+    with open(filename, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(['Chunk Start Time (s)', 'Mood', 'Color (RGB)', 'Loudness (dB)', 'Energy Level'])
+        for data in mood_list:
+            timestamp, mood, color, loudness, energy = data
+            writer.writerow([f'{timestamp:.2f}', mood, str(color), f'{loudness:.2f}', energy])
 
-def lerp(a, b, t):
-    """Linear interpolation for 3/4-tuples; forces numeric output."""
-    a = np.array(a, dtype=float).flatten()
-    b = np.array(b, dtype=float).flatten()
-    out = a + (b - a) * t
-    return tuple(int(np.clip(x, 0, 255)) for x in out)
-
-
-# -------------------------
-# Audio chunk processing
-# -------------------------
 def process_audio_chunk(chunk, buffer, genre):
     buffer.update(chunk)
     windowed_audio = buffer.get_window()
-
     mode_key = detect_mode_key(windowed_audio)
     tempo = detect_tempo(windowed_audio)
     loudness = detect_loudness(windowed_audio)
     rhythm = extract_rhythm(windowed_audio)
     harmony = extract_harmony(windowed_audio)
-
-    # prepare features for KNN mood classifier
-    features_processed = preprocess_features(
-        mode_key,
-        tempo,
-        loudness,
-        rhythm[0] if isinstance(rhythm, (list, tuple, np.ndarray)) else rhythm,
-        harmony
-    )
+    features_processed = preprocess_features(mode_key, tempo, loudness, rhythm[0], harmony)
     mood = predict_mood(features_processed)
-
-    # map mood → genre palette color
-    mood_color = map_mood_to_genre_color(mood, genre)
-
+    color = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
     energy_level = get_energy_level(loudness)
+    return mood, color, loudness, energy_level
 
-    return mood, mood_color, loudness, energy_level, tempo, rhythm, harmony
-
-
-# -------------------------
-# Lighting algorithm
-# -------------------------
-def adaptive_lighting_step(dmx, genre, mood, base_color_rgb, loudness_db, energy_level, tempo_bpm, rhythm, harmony, prev_rgbw):
-    # Normalize features
-    loud_norm = np.clip((loudness_db + 60) / 50.0, 0.0, 1.0)
-    tempo_norm = np.clip((tempo_bpm - 60.0) / 120.0, 0.0, 1.0)
-
-    # Rhythm scalar
-    if isinstance(rhythm, (list, tuple, np.ndarray)):
-        rhythm_scalar = float(np.mean(rhythm))
-    else:
-        rhythm_scalar = float(rhythm)
-    rhythm_norm = float(np.clip(rhythm_scalar, 0.0, 1.0))
-
-    # Harmony 0..1
-    harmony_norm = np.clip(harmony if 0 <= harmony <= 1 else (abs(harmony) % 1.0), 0.0, 1.0)
-
-    # Energy-based brightness
-    energy_brightness = get_brightness_from_energy(energy_level)
-
-    # Hue speed
-    hue_speed = 0.6 + tempo_norm * 1.4 + harmony_norm * 0.6
-    hue_speed = float(np.clip(hue_speed, 0.2, 3.0))
-
-    phase = time.time() * (0.2 + hue_speed * 0.6)
-    hue = (np.sin(phase) * 0.5 + 0.5)
-
-    pulse = 0.5 + 0.5 * np.sin(2.0 * np.pi * rhythm_norm * (time.time() % max(1.0, (60.0 / max(tempo_bpm, 1.0)))))
-    pulse = float(np.clip(pulse, 0.0, 1.0))
-
-    brightness = float(np.clip(loud_norm * energy_brightness * (0.6 + 0.4 * pulse), 0.05, 1.0))
-
-    # Compute RGB
-    base_r, base_g, base_b = base_color_rgb
-    shift = (hue - 0.5) * (0.5 + 0.8 * harmony_norm)
-    r_mul = np.clip(1.0 + shift, 0.1, 1.9)
-    g_mul = np.clip(1.0 - 0.5 * shift, 0.1, 1.9)
-    b_mul = np.clip(1.0 - 0.5 * (-shift), 0.1, 1.9)
-
-    target_r = int(np.clip(base_r * r_mul * brightness, 0, 255))
-    target_g = int(np.clip(base_g * g_mul * brightness, 0, 255))
-    target_b = int(np.clip(base_b * b_mul * brightness, 0, 255))
-    target_w = int(np.clip(255 * (0.15 + 0.85 * brightness), 0, 255))
-
-    target_rgbw = (target_r, target_g, target_b, target_w)
-    smooth_rgbw = target_rgbw if prev_rgbw is None else lerp(prev_rgbw, target_rgbw, COLOR_LERP_FACTOR)
-
-    try:
-        dmx.update_lighting(smooth_rgbw, float(hue_speed))
-    except Exception:
-        try:
-            dmx.set_channel(4, smooth_rgbw[3])
-            dmx.set_channel(3, smooth_rgbw[2])
-            dmx.set_channel(2, smooth_rgbw[1])
-            dmx.set_channel(1, smooth_rgbw[0])
-            dmx.send_frame()
-        except Exception:
-            print("[DMX fallback] RGBW:", smooth_rgbw, "hue_speed:", hue_speed)
-
-    return smooth_rgbw
-
-
-# -------------------------
-# Lighting thread
-# -------------------------
 def lighting_controller_thread(genre, dmx_port, mood_queue, stop_event):
     dmx = SimpleDMX(port=dmx_port)
     dmx.start_broadcast()
     print("\nStarting adaptive lighting controller...")
-    prev_rgbw = None
+    last_color = None
+    last_update_time = 0
     try:
         while not stop_event.is_set():
             try:
-                item = mood_queue.get(timeout=0.12)
+                mood, color, loudness, energy = mood_queue.get(timeout=0.2)
+                now = time.time()
+                if color != last_color or (now - last_update_time) > UPDATE_INTERVAL:
+                    brightness = get_brightness_from_energy(energy)
+                    scaled_color = tuple(int(c * brightness) for c in color)
+                    dmx.set_channels(list(scaled_color) + [0]*(9-3))
+                    last_color = color
+                    last_update_time = now
             except queue.Empty:
                 continue
-            try:
-                mood, color, loudness, energy, tempo, rhythm, harmony = item
-                prev_rgbw = adaptive_lighting_step(
-                    dmx, genre, mood, color, loudness, energy, tempo, rhythm, harmony, prev_rgbw
-                )
             except Exception as e:
-                print(f"[Lighting thread] Error applying lighting step: {e}")
+                print(f"[Lighting thread] Error: {e}")
     finally:
         print("Lighting controller exiting.")
         dmx.close()
 
-
-# -------------------------
-# Main audio processing loop
-# -------------------------
 def process_single_file(filepath, genre, dmx_port):
     print(f"\nProcessing {filepath}... Genre: {genre}")
     y, sr = librosa.load(filepath, sr=SR, mono=True)
     if len(y) == 0:
         print("ERROR: Audio file is empty or invalid.")
         return []
+    print(f"Loaded audio file. Duration: {len(y)/sr:.2f}s")
 
     buffer = AudioBuffer(WINDOW_SIZE)
     chunk_moods = []
@@ -211,51 +115,57 @@ def process_single_file(filepath, genre, dmx_port):
     )
     lighting_thread.start()
 
-    pos = 0
     try:
+        pos = 0
+        print("Starting real-time analysis and lighting...")
+        print("Press Ctrl+C to stop.\n")
         while pos < len(y):
             start_time = time.time()
-            chunk = y[pos:pos + HOP_SIZE]
+            chunk = y[pos:pos+HOP_SIZE]
             if len(chunk) < HOP_SIZE:
-                chunk = np.pad(chunk, (0, HOP_SIZE - len(chunk)), 'constant')
+                chunk = np.pad(chunk, (0, HOP_SIZE-len(chunk)), 'constant')
             try:
-                mood, mood_color, loudness, energy, tempo, rhythm, harmony = process_audio_chunk(chunk, buffer, genre)
-                chunk_moods.append((pos / sr, mood, mood_color, loudness, energy))
+                mood, color, loudness, energy = process_audio_chunk(chunk, buffer, genre)
+                timestamp = pos / sr
+                chunk_moods.append((timestamp, mood, color, loudness, energy))
                 if not mood_queue.full():
-                    mood_queue.put((mood, mood_color, loudness, energy, tempo, rhythm, harmony))
-                print(f"[{pos/sr:6.2f}s] Mood: {mood:12s} | Tempo: {tempo:6.2f} | Loud: {loudness:6.2f}dB | Energy: {energy}")
+                    mood_queue.put((mood, color, loudness, energy))
+                print(f"[{timestamp:6.2f}s] Mood: {mood:12s} | Color: {color} | Loudness: {loudness:6.2f}dB | Energy: {energy}")
             except Exception as e:
                 print(f"Error processing chunk at {pos/sr:.2f}s: {e}")
             pos += HOP_SIZE
             elapsed = time.time() - start_time
-            time.sleep(max(0, HOP_SEC - elapsed))
+            sleep_time = HOP_SEC - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
     except KeyboardInterrupt:
         print("\nStopping analysis manually (Ctrl+C).")
     finally:
         stop_event.set()
         lighting_thread.join(timeout=2)
+        output_file = f"mood_analysis_{Path(filepath).stem}_{genre.replace(' ','_')}.csv"
+        save_moods_to_csv(chunk_moods, output_file)
         print(f"\nProcessed {len(chunk_moods)} chunks.")
-
+        print(f"Results saved to: {output_file}")
     return chunk_moods
 
-
-# -------------------------
-# Main
-# -------------------------
 def main():
-    genre, filepath, dmx_port = get_user_inputs()
-    print(f"\nConfiguration:\nGenre: {genre}\nAudio file: {filepath}\nDMX port: {dmx_port}")
-    input("\nPress Enter to start...")
-    results = process_single_file(filepath, genre, dmx_port)
-    print("\n=== Analysis Complete ===")
-    if results:
-        moods = [mood for _, mood, _, _, _ in results]
-        unique_moods = list(set(moods))
-        print(f"Detected moods: {', '.join(unique_moods)}")
-        mood_counts = {mood: moods.count(mood) for mood in unique_moods}
-        dominant_mood = max(mood_counts.items(), key=lambda x: x[1])
-        print(f"Dominant mood: {dominant_mood[0]} ({dominant_mood[1]} chunks)")
-
+    try:
+        genre, filepath, dmx_port = get_user_inputs()
+        print(f"\nConfiguration:\nGenre: {genre}\nAudio file: {filepath}\nDMX port: {dmx_port}")
+        input("\nPress Enter to start...")
+        results = process_single_file(filepath, genre, dmx_port)
+        print("\n=== Analysis Complete ===")
+        if results:
+            moods = [m for _, m, _, _, _ in results]
+            unique_moods = list(set(moods))
+            print(f"Detected moods: {', '.join(unique_moods)}")
+            dominant_mood = max(unique_moods, key=lambda m: moods.count(m))
+            print(f"Dominant mood: {dominant_mood}")
+        else:
+            print("No moods detected — check feature extraction or model issues.")
+    except Exception as e:
+        print(f"Error in main execution: {e}")
 
 if __name__ == "__main__":
     main()
