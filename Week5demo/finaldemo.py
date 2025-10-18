@@ -12,14 +12,14 @@ import numpy as np
 import traceback
 from pathlib import Path
 
-# --- Import your custom feature modules (NOW FIXED AND RELIABLE) ---
-from tempo_final import detect_tempo
-from loudness_final import detect_loudness
+# --- Import your custom feature modules ---
+from tempo_detection import detect_tempo
+from loudness_detection import detect_loudness
 from mode_key_detection import detect_mode_key
-from audio_analyzer import process_audio_features # Handles Feature-to-Action mapping
+from audio_analyzer import process_audio_features 
 
 # Import all necessary functions from color_mapper
-from color_mapper import get_available_genres, map_features_to_genre_color # Handles Feature-to-Color mapping
+from color_mapper import get_available_genres, map_features_to_genre_color 
 
 # DMX setup (using a mock class if SimpleDMX is unavailable)
 try:
@@ -170,17 +170,16 @@ def stream_mp3_realtime(
                 time_position = (len(results) * hop_samples) / sample_rate
                 
                 # --- CRITICAL SYNCHRONIZATION BLOCK ---
-                # This ensures analysis runs in real-time without building up lag.
                 actual_elapsed_time = time.time() - start_time
                 sleep_needed = time_position - actual_elapsed_time
                 
-                if sleep_needed > 0.005: # Sleep if more than 5ms ahead of schedule
+                if sleep_needed > 0.005: 
                     time.sleep(sleep_needed)
                 # -------------------------------------
                 
                 window = analysis_buffer[:chunk_samples]
                 
-                # --- 3. Feature Extraction (The now-fixed core logic) ---
+                # --- 3. Feature Extraction ---
                 mode, key = detect_mode_key(window, sample_rate)
                 tempo = detect_tempo(window, sample_rate) 
                 loudness = detect_loudness(window, sample_rate) # Should now be -dBFS!
@@ -190,18 +189,21 @@ def stream_mp3_realtime(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
                 
+                # FIX: map_features_to_genre_color only accepts 3 arguments. 
+                # We remove 'mode' and 'key' to match the function signature.
                 mapped_rgb = map_features_to_genre_color(
-                    loudness=loudness, tempo=tempo, mode=mode, key=key, genre=genre
+                    loudness=loudness, 
+                    tempo=tempo, 
+                    genre=genre
                 )
                 
                 r, g, b = mapped_rgb
-                # We use W=0 for simplicity, assuming RGB fixture (can be changed later)
                 rgbw = (int(r), int(g), int(b), 0) 
                 
                 # --- 5. DMX Output ---
                 dmx.update_lighting(rgbw, hue_speed)
                 
-                # --- 6. Logging (Verify correct -dB values now) ---
+                # --- 6. Logging ---
                 print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Mode:{mode:6s} | Key:{key:5s} -> RGB{rgbw[:3]}")
 
                 results.append({
@@ -280,4 +282,3 @@ if __name__ == "__main__":
         dmx.stop_broadcast()
         dmx.close()
         print("\n[END] DMX broadcast stopped and port closed.")
-
