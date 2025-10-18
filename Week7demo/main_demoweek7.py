@@ -15,7 +15,12 @@ from Loudness_detection_Week7 import detect_loudness
 from Rhythm_Detection_Week7 import extract_rhythm
 from Harmony_detection_Week7 import extract_harmony
 from KNN_Week7 import preprocess_features, predict_mood
-from color_mapper import map_features_to_genre_color, get_energy_level, get_brightness_from_energy
+from color_mapper import (
+    map_features_to_genre_color, 
+    get_energy_level, 
+    get_brightness_from_energy,
+    get_available_genres
+)
 
 SR = 44100
 WINDOW_SEC = 5.0
