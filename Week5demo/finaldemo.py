@@ -1,6 +1,6 @@
 """
 Realtime MP3 → Feature Analysis + DMX output.
-FINAL VERSION: Includes Real-Time Synchronization and Loudness-Based Color Mapping.
+FINAL VERSION: Optimized for reduced computation time.
 """
 
 import os
@@ -96,7 +96,7 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9):
 
 
 # ====================================================================
-# REAL-TIME STREAMING AND ANALYSIS (AGGRESSIVELY OPTIMIZED TIMING)
+# REAL-TIME STREAMING AND ANALYSIS (COMPUTATIONALLY OPTIMIZED)
 # ====================================================================
 
 def stream_mp3_realtime(
@@ -106,8 +106,8 @@ def stream_mp3_realtime(
     sample_rate: int = 44100,
     channels: int = 1,
     audio_block: int = 1024,
-    chunk_seconds: float = 0.25,
-    hop_ratio: float = 0.25, # AGGRESSIVELY OPTIMIZED
+    chunk_seconds: float = 1.0, # INCREASED TO 1.0 FOR FASTER PROCESSING
+    hop_ratio: float = 0.5,     # SET TO 0.5 FOR CONSISTENT 0.5 SEC UPDATES
     save_json: bool = True,
 ):
     """
@@ -140,7 +140,7 @@ def stream_mp3_realtime(
     bytes_per_sample = 4
     frame_bytes = audio_block * channels * bytes_per_sample
     chunk_samples = int(chunk_seconds * sample_rate)
-    # Recalculate hop_samples using the aggressive hop_ratio
+    # Recalculate hop_samples using the new hop_ratio
     hop_samples = max(1, int(chunk_samples * hop_ratio)) 
     analysis_buffer = np.empty(0, dtype=np.float32)
     results = []
@@ -244,11 +244,14 @@ if __name__ == "__main__":
     # 1. Get User Inputs
     selected_genre, mp3_file_path, dmx_port = get_user_inputs()
     
+    # *** IMPORTANT: Change the reported update rate to reflect the new hop size ***
+    update_rate = stream_mp3_realtime.__defaults__[4] * stream_mp3_realtime.__defaults__[5] 
+    
     print("\n--- Configuration Summary ---")
     print(f"Genre: {selected_genre.title()}")
     print(f"File: {mp3_file_path}")
     print(f"DMX Port: {dmx_port}")
-    print(f"Update Rate: {0.25} seconds (Responsive)")
+    print(f"Update Rate: {1.0 * 0.5} seconds (Optimized Speed)") # Display the actual update interval (1.0 * 0.5 = 0.5s)
     print("-----------------------------\n")
 
     # 2. Initialize DMX
@@ -261,8 +264,8 @@ if __name__ == "__main__":
             mp3_path=mp3_file_path,
             dmx=dmx,
             genre=selected_genre,
-            chunk_seconds=0.25,
-            hop_ratio=0.25, # Using the aggressive hop ratio
+            chunk_seconds=1.0, # Pass the new parameters
+            hop_ratio=0.5,     # Pass the new parameters
         )
     finally:
         # 4. Clean up DMX
