@@ -5,8 +5,7 @@ import librosa
 import numpy as np
 import threading
 import queue
-import colorsys
-from pyserial import SimpleDMX  # your DMX class
+from pyserial import SimpleDMX  # your provided DMX class
 
 from Buffer_Manager_Week7 import AudioBuffer
 from Mode_Extraction_Week7 import detect_mode_key
@@ -14,13 +13,8 @@ from Tempo_detection_week7 import detect_tempo
 from Loudness_detection_Week7 import detect_loudness
 from Rhythm_Detection_Week7 import extract_rhythm
 from Harmony_detection_Week7 import extract_harmony
-from KNN_Week7 import preprocess_features, predict_mood
-from mood_color_map import map_mood_to_genre_color, get_energy_level
 
-
-# ============================================================
-# CONSTANTS
-# ============================================================
+# Constants
 SR = 44100
 WINDOW_SEC = 5.0
 HOP_SEC = 2.5
@@ -30,9 +24,7 @@ LOUDNESS_HIGH_THRESHOLD = -20
 LOUDNESS_LOW_THRESHOLD = -40
 
 
-# ============================================================
-# USER INPUTS
-# ============================================================
+# === User Input ===
 def get_user_inputs():
     print("=== Music-to-Light System ===")
     genres = [
@@ -40,7 +32,6 @@ def get_user_inputs():
         "country", "gospel", "jazz", "folk", "electronics and dance",
         "latin", "metal", "pop", "reggae"
     ]
-
     for i, genre in enumerate(genres, 1):
         print(f"{i}. {genre}")
     while True:
@@ -50,7 +41,7 @@ def get_user_inputs():
                 selected_genre = genres[choice - 1]
                 break
             else:
-                print("Invalid choice. Please try again.")
+                print("Invalid choice. Try again.")
         except ValueError:
             print("Please enter a valid number.")
     while True:
@@ -63,85 +54,68 @@ def get_user_inputs():
     return selected_genre, filepath, dmx_port
 
 
-# ============================================================
-# AUDIO CHUNK PROCESSING
-# ============================================================
-def process_audio_chunk(chunk, buffer, genre):
+# === Color Mapping ===
+def map_features_to_color(loudness, tempo):
+    """
+    Generate RGBW color and hue speed based on loudness & tempo.
+    Louder → brighter; Faster → more blueish tone.
+    """
+    loud_norm = np.clip((loudness + 60) / 50, 0.0, 1.0)  # normalize -60–0dB
+    tempo_norm = np.clip((tempo - 60) / 120, 0.0, 1.0)   # normalize 60–180 BPM
+
+    # Compute base color: blend red (slow) → blue (fast)
+    red = int(255 * (1 - tempo_norm))
+    blue = int(255 * tempo_norm)
+    green = int(100 + 155 * loud_norm)
+    white = int(80 * loud_norm)
+
+    hue_speed = 0.5 + tempo_norm * 1.5  # faster tempo → quicker hue cycling
+    return (red, green, blue, white), hue_speed
+
+
+# === Audio Chunk Processing ===
+def process_audio_chunk(chunk, buffer):
     buffer.update(chunk)
     windowed_audio = buffer.get_window()
-    mode_key = detect_mode_key(windowed_audio)
+
+    # Extract relevant features
     tempo = detect_tempo(windowed_audio)
     loudness = detect_loudness(windowed_audio)
-    rhythm = extract_rhythm(windowed_audio)
-    harmony = extract_harmony(windowed_audio)
-    features_processed = preprocess_features(mode_key, tempo, loudness, rhythm[0], harmony)
-    mood = predict_mood(features_processed)
-    mood_color = map_mood_to_genre_color(mood, genre)
-    energy_level = get_energy_level(loudness)
-    return mood, mood_color, loudness, energy_level, tempo
+
+    return tempo, loudness
 
 
-# ============================================================
-# LIGHTING CONTROLLER THREAD
-# ============================================================
-def lighting_controller_thread(genre, dmx_port, mood_queue, stop_event):
+# === Lighting Controller Thread ===
+def lighting_controller_thread(dmx_port, mood_queue, stop_event):
     dmx = SimpleDMX(port=dmx_port)
     dmx.start_broadcast()
-    print("\nStarting adaptive lighting controller...")
-
-    hue = 0.0
-    brightness = 0.5
-    prev_color = (0, 0, 0, 0)
+    print("\n[Lighting] Controller started...")
 
     try:
         while not stop_event.is_set():
             try:
                 if not mood_queue.empty():
-                    mood, color, loudness, energy, tempo = mood_queue.get_nowait()
-
-                    # Map loudness (-60dB → 0dB) to brightness 0–1
-                    brightness = np.clip((loudness + 60) / 60.0, 0.0, 1.0)
-
-                    # Map tempo to hue cycling speed (0.1–1.0 range)
-                    hue_speed = np.clip(tempo / 200.0, 0.1, 1.0)
-
-                    # Cycle hue smoothly
-                    hue = (hue + hue_speed * 0.02) % 1.0
-
-                    # Convert HSV → RGB
-                    r, g, b = colorsys.hsv_to_rgb(hue, 1.0, brightness)
-                    rgbw = (int(r * 255), int(g * 255), int(b * 255), 0)
-
-                    # Smooth transition (lerp)
-                    r = int(prev_color[0] + 0.3 * (rgbw[0] - prev_color[0]))
-                    g = int(prev_color[1] + 0.3 * (rgbw[1] - prev_color[1]))
-                    b = int(prev_color[2] + 0.3 * (rgbw[2] - prev_color[2]))
-                    w = int(prev_color[3] + 0.3 * (rgbw[3] - prev_color[3]))
-                    prev_color = (r, g, b, w)
-
-                    # Update DMX lighting using your method
-                    dmx.update_lighting(prev_color, hue_speed)
-
-                    print(f"[Light] Mood={mood:10s} | Tempo={tempo:6.1f} BPM | Loudness={loudness:6.1f} dB | RGBW={prev_color}")
-
+                    tempo, loudness = mood_queue.get_nowait()
+                    rgbw, hue_speed = map_features_to_color(loudness, tempo)
+                    dmx.update_lighting(rgbw, hue_speed)
+            except queue.Empty:
+                pass
             except Exception as e:
                 print(f"[Lighting thread] Error: {e}")
-
-            time.sleep(0.05)  # smooth updates
+            time.sleep(0.1)
     finally:
         print("Lighting controller exiting.")
         dmx.close()
 
 
-# ============================================================
-# MAIN AUDIO PROCESSING LOOP
-# ============================================================
+# === Main Audio Loop ===
 def process_single_file(filepath, genre, dmx_port):
     print(f"\nProcessing {filepath}... Genre: {genre}")
     y, sr = librosa.load(filepath, sr=SR, mono=True)
     if len(y) == 0:
-        print("ERROR: Audio file is empty or invalid.")
+        print("ERROR: Audio file empty or invalid.")
         return
+
     print(f"Loaded audio file. Duration: {len(y) / sr:.2f} seconds")
 
     buffer = AudioBuffer(WINDOW_SIZE)
@@ -150,14 +124,14 @@ def process_single_file(filepath, genre, dmx_port):
 
     lighting_thread = threading.Thread(
         target=lighting_controller_thread,
-        args=(genre, dmx_port, mood_queue, stop_event),
+        args=(dmx_port, mood_queue, stop_event),
         daemon=True
     )
     lighting_thread.start()
 
     try:
         pos = 0
-        print("Starting real-time analysis and lighting...")
+        print("\nStarting analysis and lighting...")
         print("Press Ctrl+C to stop.\n")
         while pos < len(y):
             start_time = time.time()
@@ -166,41 +140,42 @@ def process_single_file(filepath, genre, dmx_port):
                 chunk = np.pad(chunk, (0, HOP_SIZE - len(chunk)), 'constant')
 
             try:
-                mood, mood_color, loudness, energy, tempo = process_audio_chunk(chunk, buffer, genre)
-                timestamp = pos / sr
+                tempo, loudness = process_audio_chunk(chunk, buffer)
                 if not mood_queue.full():
-                    mood_queue.put((mood, mood_color, loudness, energy, tempo))
-                print(f"[{timestamp:6.2f}s] Mood: {mood:12s} | Loudness: {loudness:6.2f}dB | Tempo: {tempo:5.1f}")
+                    mood_queue.put((tempo, loudness))
+                print(f"[{pos / sr:6.2f}s] Tempo: {tempo:6.2f} BPM | Loudness: {loudness:6.2f} dB")
             except Exception as e:
                 print(f"Error processing chunk at {pos/sr:.2f}s: {e}")
-                import traceback
-                traceback.print_exc()
 
             pos += HOP_SIZE
             elapsed = time.time() - start_time
             sleep_time = HOP_SEC - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
+
     except KeyboardInterrupt:
         print("\nStopping analysis manually (Ctrl+C).")
     finally:
         stop_event.set()
         lighting_thread.join(timeout=2)
-        print("\nProcessing complete. Lighting stopped.")
+        print("\nAnalysis complete. Lighting thread stopped.")
 
 
-# ============================================================
-# MAIN ENTRY POINT
-# ============================================================
+# === Entry Point ===
 def main():
-    genre, filepath, dmx_port = get_user_inputs()
-    print(f"\nConfiguration:")
-    print(f"Genre: {genre}")
-    print(f"Audio file: {filepath}")
-    print(f"DMX port: {dmx_port}")
-    print(f"Processing window: {WINDOW_SEC}s, hop: {HOP_SEC}s")
-    input("\nPress Enter to start...\n")
-    process_single_file(filepath, genre, dmx_port)
+    try:
+        genre, filepath, dmx_port = get_user_inputs()
+        print(f"\nConfiguration:")
+        print(f"Genre: {genre}")
+        print(f"Audio: {filepath}")
+        print(f"DMX Port: {dmx_port}")
+        print(f"Window: {WINDOW_SEC}s | Hop: {HOP_SEC}s\n")
+        input("Press Enter to start...")
+        process_single_file(filepath, genre, dmx_port)
+    except Exception as e:
+        print(f"Error in main(): {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
