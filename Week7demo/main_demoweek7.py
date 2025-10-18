@@ -71,21 +71,24 @@ def lighting_controller_thread(genre, dmx_port, mood_queue, stop_event):
     dmx.start_broadcast()
     print("\nStarting adaptive lighting controller...")
     last_color = None
+    last_energy = None
     try:
         while not stop_event.is_set():
             try:
-                if not mood_queue.empty():
+                # Get the latest mood/color from queue
+                while not mood_queue.empty():
                     mood, color, loudness, energy = mood_queue.get_nowait()
-                    
-                    # Only update if color has changed
-                    if last_color != color:
-                        last_color = color
-                        run_low_frequency_dmx_chunk(dmx, color, energy, duration=HOP_SEC)
+
+                # Only update DMX if color or energy changed
+                if color != last_color or energy != last_energy:
+                    last_color = color
+                    last_energy = energy
+                    run_low_frequency_dmx_chunk(dmx, color, energy, duration=0.1)
             except queue.Empty:
                 pass
             except Exception as e:
                 print(f"[Lighting thread] Error: {e}")
-            time.sleep(0.05)
+            time.sleep(0.05)  # Broadcast tick
     finally:
         print("Lighting controller exiting.")
         dmx.close()
@@ -128,8 +131,6 @@ def process_single_file(filepath, genre, dmx_port):
                 print(f"[{timestamp:6.2f}s] Mood: {mood:12s} | Color: {mood_color} | Loudness: {loudness:6.2f}dB | Energy: {energy}")
             except Exception as e:
                 print(f"Error processing chunk at {pos/sr:.2f}s: {e}")
-                import traceback
-                traceback.print_exc()
             pos += HOP_SIZE
             elapsed = time.time() - start_time
             sleep_time = HOP_SEC - elapsed
@@ -137,10 +138,6 @@ def process_single_file(filepath, genre, dmx_port):
                 time.sleep(sleep_time)
     except KeyboardInterrupt:
         print("\nStopping analysis manually (Ctrl+C).")
-    except Exception as e:
-        print(f"Unexpected processing error: {e}")
-        import traceback
-        traceback.print_exc()
     finally:
         stop_event.set()
         lighting_thread.join(timeout=2)
@@ -171,8 +168,6 @@ def main():
             print("No moods detected — check for feature extraction or model issues.")
     except Exception as e:
         print(f"Error in main execution: {e}")
-        import traceback
-        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
