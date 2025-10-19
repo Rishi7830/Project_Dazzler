@@ -14,7 +14,6 @@ from Loudness_detection_Week7 import detect_loudness
 from Rhythm_Detection_Week7 import extract_rhythm
 from Harmony_detection_Week7 import extract_harmony
 from KNN_Week7 import preprocess_features, predict_mood
-# get_energy_level is assumed to return a string ('low', 'medium', 'high')
 from mood_color_map import map_mood_to_genre_color, get_energy_level 
 
 # === CONSTANTS ===
@@ -56,7 +55,8 @@ class SimpleDMX:
         self.data = [0] * self.num_channels
         self.running = False
         self.strobe_on = False
-        self.strobe_interval = strobe_interval
+        # Ensure initial strobe_interval is a standard float
+        self.strobe_interval = float(strobe_interval) 
         self.color_to_strobe = (0, 0, 0, 0)
         self.thread = None
         self.ser = None
@@ -103,14 +103,14 @@ class SimpleDMX:
         if not self.ser:
             return
 
-        # energy_level is a float (0.0 to 1.0)
-        hue_speed = energy_level 
+        hue_speed = float(energy_level) # Ensure this is a standard float
 
         strobe_threshold = HIGH_ENERGY_THRESHOLD
         if hue_speed >= strobe_threshold:
             self.strobe_on = True
-            # Adjust strobe interval based on energy_level (faster for higher energy)
-            self.strobe_interval = max(0.05, 0.5 * (1.0 - energy_level)) 
+            # Update self.strobe_interval, ensuring the result is a standard float
+            self.strobe_interval = max(0.05, 0.5 * (1.0 - hue_speed)) 
+            
             self.color_to_strobe = color_rgbw
             
             self.set_channels_from_tuple(self.color_to_strobe)
@@ -152,8 +152,17 @@ class SimpleDMX:
         print("DMX broadcast thread started.")
         while self.running:
             self.send_frame()
+            # Calculate sleep_time
             sleep_time = self.strobe_on and self.strobe_interval or 0.03
-            time.sleep(sleep_time)
+            
+            # --- CRITICAL FIX: Cast to standard float to resolve TypeError ---
+            try:
+                time.sleep(float(sleep_time)) 
+            except Exception as e:
+                print(f"[DMX Broadcast Error] Failed to sleep: {e}")
+                self.running = False # Stop the loop immediately on error
+                break
+                
         print("DMX broadcast thread stopped.")
 
     def start_broadcast(self):
@@ -183,16 +192,14 @@ class SimpleDMX:
 def calculate_numeric_energy(loudness):
     """Calculates a numeric energy level (0.0 to 1.0) based on loudness."""
     
-    # Calculate scale factor relative to the thresholds
     loudness_range = LOUDNESS_HIGH_THRESHOLD - LOUDNESS_LOW_THRESHOLD
     if loudness_range <= 0:
-        # Avoid division by zero, return mid-range if thresholds are illogical
         return 0.5 
     
     scale = (loudness - LOUDNESS_LOW_THRESHOLD) / loudness_range
     
-    # Clamp the result between 0.0 and 1.0
-    return max(0.0, min(1.0, scale))
+    # Cast to float here just in case (though librosa should return floats)
+    return float(max(0.0, min(1.0, scale)))
 
 
 # === USER INPUT ===
@@ -253,11 +260,9 @@ def process_audio_chunk(chunk, buffer, genre):
     rgb_color = map_mood_to_genre_color(mood, genre) 
     mood_color = rgb_color + (0,) # RGBW
 
-    # CRITICAL CHANGE: Get both the numeric float and the descriptive string
     numeric_energy = calculate_numeric_energy(loudness) 
-    descriptive_energy = get_energy_level(loudness) # Assumed to return 'low', 'medium', or 'high' string
+    descriptive_energy = get_energy_level(loudness) 
 
-    # Return the float for DMX, and the string for logging
     return mood, mood_color, loudness, numeric_energy, descriptive_energy
 
 
@@ -278,11 +283,11 @@ def lighting_controller_thread(dmx: SimpleDMX, mood_queue, stop_event):
                     while mood_queue.qsize() > 1:
                         mood_queue.get_nowait()
                         
-                    # CRITICAL FIX: Retrieve only the expected 4 values
-                    # (mood, color, loudness, NUMERIC_energy)
                     mood, color, loudness, energy = mood_queue.get_nowait()
                     
-                    # NOTE: 'energy' is now a float (0.0-1.0), no string conversion needed.
+                    # Ensure all values are standard floats for DMX calculations
+                    loudness = float(loudness)
+                    energy = float(energy)
 
                     # Determine the mode description for logging
                     if loudness >= LOUDNESS_HIGH_THRESHOLD:
@@ -354,20 +359,16 @@ def process_single_file(filepath, genre, dmx_port):
                 chunk = np.pad(chunk, (0, HOP_SIZE - len(chunk)), 'constant')
 
             try:
-                # CRITICAL CHANGE: Receive both numeric_energy and descriptive_energy
                 mood, mood_color, loudness, numeric_energy, descriptive_energy = process_audio_chunk(chunk, buffer, genre)
                 timestamp = pos / sr
                 
-                # Append data using the descriptive string for list storage/logging
                 chunk_moods.append((timestamp, mood, mood_color, loudness, descriptive_energy))
 
-                # CRITICAL CHANGE: Queue the NUMERIC energy (float) for the DMX thread
                 if mood_queue.full():
                     mood_queue.get_nowait()
                 mood_queue.put_nowait((mood, mood_color, loudness, numeric_energy)) 
 
 
-                # Log using the descriptive string
                 print(f"[{timestamp:6.2f}s] Mood: {mood:12s} | Color: {mood_color} | Loudness: {loudness:6.2f}dB | Energy: {descriptive_energy}")
 
             except Exception as e:
