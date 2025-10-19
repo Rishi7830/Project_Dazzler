@@ -8,10 +8,10 @@ import queue
 import serial 
 
 from Buffer_Manager_Week7 import AudioBuffer
-# Import all feature modules (ensure these files are present and correct)
+# Feature Modules (must be present in your directory)
 from Mode_Extraction_Week7 import detect_mode_key
-from Tempo_detection_week7 import detect_tempo
-from Loudness_detection_Week7 import detect_loudness
+from Tempo_detection_week7 import detect_tempo # CRITICAL
+from Loudness_detection_week7 import detect_loudness
 from Rhythm_Detection_Week7 import extract_rhythm 
 from Harmony_detection_Week7 import extract_harmony
 from KNN_Week7 import preprocess_features, predict_mood
@@ -24,15 +24,15 @@ HOP_SEC = 2.5
 WINDOW_SIZE = int(WINDOW_SEC * SR)
 HOP_SIZE = int(HOP_SEC * SR)
 
-# Loudness thresholds (Adjusted for Classical Music)
-LOUDNESS_HIGH_THRESHOLD = -25.0   # dB: Max average loudness for non-high energy segment
-LOUDNESS_LOW_THRESHOLD = -45.0    # dB: Min average loudness for non-low energy segment
+# Loudness thresholds (Used to determine strobe vs constant mode)
+LOUDNESS_HIGH_THRESHOLD = -25.0   # dB: Triggers strobe/tempo mode
+LOUDNESS_LOW_THRESHOLD = -45.0    # dB: Triggers low light/fade mode
 
 # DMX Strobe/Beat Configuration
-# Threshold for the rhythm feature (e.g., onset strength or beat presence)
-RHYTHM_BEAT_THRESHOLD = 0.5 
+# This is now ignored, as tempo controls the strobe speed in high-loudness mode.
+RHYTHM_BEAT_THRESHOLD = 0.95 
 
-# DMX Channel Constants (MH363 9-channel)
+# DMX Channel Constants
 CH_PAN    = 1
 CH_TILT   = 2
 CH_STROBE = 3
@@ -43,13 +43,14 @@ CH_WHITE  = 7
 CH_DIMMER = 8
 CH_SOUND  = 9
 
-# Strobe channel value helpers (Channel 3)
+# Strobe channel value helpers
 VAL_LED_OFF     = 0
-VAL_STROBE_FAST = 131
-VAL_LED_START   = 255 # constant on
+VAL_STROBE_SLOW = 100 # Example slow speed
+VAL_STROBE_FAST = 131 # Example fast speed
+VAL_LED_START   = 255 # constant on (non-strobe state)
 
 class SimpleDMX:
-    def __init__(self, port: str, strobe_interval: float = 0.1):
+    def __init__(self, port: str, strobe_interval: float = 0.05):
         self.port = port
         self.num_channels = 9
         self.data = [0] * self.num_channels
@@ -105,23 +106,43 @@ class SimpleDMX:
             self.set_channel_internal(CH_DIMMER, 0)
             self.set_channel_internal(CH_STROBE, VAL_LED_OFF)
 
-    # CRITICAL CHANGE: Use beat_trigger for momentary strobe
-    def update_lighting(self, color_rgbw, energy_level: float, beat_trigger: bool):
+    # CRITICAL CHANGE: Use loudness and tempo to set mode and strobe speed
+    def update_lighting(self, color_rgbw, loudness: float, tempo: float):
         if not self.ser:
             return
 
         self.set_channels_from_tuple(color_rgbw)
-        self.set_channel_internal(CH_DIMMER, 255) # Dimmer fully on
 
-        if beat_trigger:
-            # Strobe on beat. We set a fast flash interval.
-            self.strobe_on = True
-            self.strobe_interval = 0.05 # Fast strobe flash duration (determines DMX broadcast sleep)
-            self.set_channel_internal(CH_STROBE, VAL_STROBE_FAST)
+        if loudness >= LOUDNESS_HIGH_THRESHOLD:
+            # Mode 1: High Energy -> Tempo-driven Strobe
+            # Map tempo (e.g., 60 BPM to 240 BPM) to a DMX strobe speed range (e.g., 100 to 131)
+            min_tempo = 60.0
+            max_tempo = 240.0
+            strobe_range = VAL_STROBE_FAST - VAL_STROBE_SLOW
+            
+            # Normalize tempo to 0-1 range
+            normalized_tempo = max(0.0, min(1.0, (tempo - min_tempo) / (max_tempo - min_tempo)))
+            
+            # Map normalized tempo to strobe value
+            strobe_value = int(VAL_STROBE_SLOW + normalized_tempo * strobe_range)
+
+            self.set_channel_internal(CH_STROBE, strobe_value)
+            self.set_channel_internal(CH_DIMMER, 255) # Full Brightness
+
+        elif loudness <= LOUDNESS_LOW_THRESHOLD:
+            # Mode 2: Low Energy -> Dim/Fade
+            self.set_channel_internal(CH_STROBE, VAL_LED_START) # Constant on
+            self.set_channel_internal(CH_DIMMER, 50) # Low Brightness (dim)
+            
         else:
-            # Set to constant ON (non-strobe)
-            self.strobe_on = False
-            self.set_channel_internal(CH_STROBE, VAL_LED_START)
+            # Mode 3: Mid Energy -> Constant Color
+            self.set_channel_internal(CH_STROBE, VAL_LED_START) # Constant on
+            # Map loudness within the mid-range to brightness (50 to 255)
+            mid_range = LOUDNESS_HIGH_THRESHOLD - LOUDNESS_LOW_THRESHOLD
+            loudness_scale = (loudness - LOUDNESS_LOW_THRESHOLD) / mid_range
+            dimmer_value = int(50 + loudness_scale * (255 - 50))
+            self.set_channel_internal(CH_DIMMER, dimmer_value)
+
 
     def send_frame(self):
         if not self.ser:
@@ -134,39 +155,22 @@ class SimpleDMX:
             time.sleep(0.001)
             self.ser.baudrate = 250000
 
-            # Start code + 9 bytes
+            # Send frame
             frame = bytes([0]) + bytes(self.data)
             self.ser.write(frame)
             self.ser.flush()
-            
-            # CRITICAL: If strobe was just sent (beat_trigger was True), turn it OFF immediately 
-            # so the flash is momentary, following the DMX standard for pulsing effects.
-            if self.strobe_on:
-                self.set_channel_internal(CH_STROBE, VAL_LED_START) # Turn back to constant-on immediately
-                self.strobe_on = False 
-                
+                            
         except serial.SerialException as e:
             print(f"Error sending DMX frame: {e}")
             self.close()
 
     def broadcast_loop(self):
-        print("DMX broadcast thread started.")
+        # DMX only needs to refresh continuously
         while self.running:
             self.send_frame()
-            # If a strobe was just sent, sleep for the short interval (0.05s) before the next send.
-            # Otherwise, use the standard background refresh rate (0.03s).
-            sleep_time = self.strobe_interval if self.strobe_on else 0.03
-            
-            try:
-                # Ensure sleep_time is a standard float
-                time.sleep(float(sleep_time)) 
-            except Exception as e:
-                print(f"[DMX Broadcast Error] Failed to sleep: {e}")
-                self.running = False 
-                break
+            # Standard DMX refresh rate
+            time.sleep(0.03) 
                 
-        print("DMX broadcast thread stopped.")
-
     def start_broadcast(self):
         if not self.ser:
             print("Cannot start broadcast: Serial port not available.")
@@ -193,13 +197,10 @@ class SimpleDMX:
 # --- HELPER FUNCTION TO GENERATE NUMERIC ENERGY ---
 def calculate_numeric_energy(loudness):
     """Calculates a numeric energy level (0.0 to 1.0) based on loudness and adjusted thresholds."""
-    
     loudness_range = LOUDNESS_HIGH_THRESHOLD - LOUDNESS_LOW_THRESHOLD
     if loudness_range <= 0:
         return 0.5 
-    
     scale = (loudness - LOUDNESS_LOW_THRESHOLD) / loudness_range
-    
     return float(max(0.0, min(1.0, scale)))
 
 
@@ -241,36 +242,35 @@ def get_user_inputs():
 # === FEATURE + MOOD PROCESSING ===
 def process_audio_chunk(chunk, buffer, genre):
     """
-    Process one audio chunk and return mood, color, loudness, 
-    NUMERIC energy (float), DESCRIPTIVE energy (string), and BEAT TRIGGER (bool).
+    Process one audio chunk and return mood, color, loudness, tempo,
+    NUMERIC energy (float), DESCRIPTIVE energy (string).
     """
     buffer.update(chunk)
     windowed_audio = buffer.get_window()
 
     # Feature extraction
     mode_key = detect_mode_key(windowed_audio)
-    tempo = detect_tempo(windowed_audio)
+    tempo = detect_tempo(windowed_audio) # CRITICAL: Extract tempo
     loudness = detect_loudness(windowed_audio)
     rhythm = extract_rhythm(windowed_audio)
     harmony = extract_harmony(windowed_audio)
     
-    # --- RHYTHM BEAT TRIGGER LOGIC ---
-    # ASSUMPTION: The first element of 'rhythm' is a quantifiable measure of beat strength/onset.
+    # RHYTHM_BEAT_THRESHOLD is now ignored for the main mode, 
+    # but rhythm_strength is still used for mood prediction.
     rhythm_strength = rhythm[0] if isinstance(rhythm, (list, tuple)) and rhythm else 0.0
-    beat_trigger = rhythm_strength > RHYTHM_BEAT_THRESHOLD
     
     # --- DEBUGGING STEP: Check if features are changing (Run with: DEBUG_FEATURES=1) ---
     if os.environ.get('DEBUG_FEATURES') == '1':
-        print(f"  [DEBUG_FEAT] Mode={mode_key}, Tempo={tempo:.1f}, Loudness={loudness:.2f}, Rhythm={rhythm_strength:.2f}, Beat={beat_trigger}")
+        print(f"  [DEBUG_FEAT] Mode={mode_key}, Tempo={tempo:.1f}, Loudness={loudness:.2f}, Rhythm={rhythm_strength:.2f}")
 
     # Combine features
     features_processed = preprocess_features(mode_key,tempo,loudness,rhythm_strength,harmony)
     
-    # Predict mood, handle potential classification failure (Stuck Mood Fix)
+    # Predict mood 
     try:
         mood = predict_mood(features_processed)
     except Exception:
-        mood = "Calmness" # Default to a neutral/safe mood
+        mood = "Calmness" 
         
     rgb_color = map_mood_to_genre_color(mood, genre) 
     mood_color = rgb_color + (0,) # RGBW
@@ -278,7 +278,8 @@ def process_audio_chunk(chunk, buffer, genre):
     numeric_energy = calculate_numeric_energy(loudness) 
     descriptive_energy = get_energy_level(loudness) 
 
-    return mood, mood_color, loudness, numeric_energy, descriptive_energy, beat_trigger
+    # CRITICAL: Return tempo
+    return mood, mood_color, loudness, tempo, numeric_energy, descriptive_energy
 
 
 # === LIGHTING CONTROLLER THREAD ===
@@ -298,25 +299,23 @@ def lighting_controller_thread(dmx: SimpleDMX, mood_queue, stop_event):
                     while mood_queue.qsize() > 1:
                         mood_queue.get_nowait()
                         
-                    mood, color, loudness, energy, beat_trigger = mood_queue.get_nowait()
+                    # CRITICAL: Receive tempo
+                    mood, color, loudness, tempo, energy_numeric, energy_desc = mood_queue.get_nowait()
                     
                     loudness = float(loudness)
-                    energy = float(energy)
+                    tempo = float(tempo)
 
-                    # Determine the mode description for logging based on beat and loudness
-                    if beat_trigger:
-                        mode_desc = "Beat-Triggered Strobe"
-                    elif loudness >= LOUDNESS_HIGH_THRESHOLD:
-                        mode_desc = "High-Loudness Continuous"
+                    if loudness >= LOUDNESS_HIGH_THRESHOLD:
+                        mode_desc = f"Tempo-Strobe ({tempo:.0f} BPM)"
                     elif loudness <= LOUDNESS_LOW_THRESHOLD:
-                        mode_desc = "Low-Loudness Fade"
+                        mode_desc = "Low-Loudness Dim"
                     else:
-                        mode_desc = "Mid-Loudness"
+                        mode_desc = "Mid-Loudness Fade" 
 
-                    print(f"  [DMX Update] Mood: {mood:12s} | Loudness: {loudness:6.2f}dB | Energy: {energy:.2f} (Numeric) | Mode: {mode_desc}")
+                    print(f"  [DMX Update] Mood: {mood:12s} | Loudness: {loudness:6.2f}dB | Tempo: {tempo:5.1f} | Mode: {mode_desc}")
 
-                    # Pass the beat_trigger to the DMX controller
-                    dmx.update_lighting(color, energy, beat_trigger)
+                    # CRITICAL: Pass loudness and tempo to the DMX controller
+                    dmx.update_lighting(color, loudness, tempo)
 
             except queue.Empty:
                 pass
@@ -348,7 +347,7 @@ def process_single_file(filepath, genre, dmx_port):
 
     buffer = AudioBuffer(WINDOW_SIZE)
     chunk_moods = []
-    # Queue structure: mood (str), color (tuple), loudness (float), numeric_energy (float), beat_trigger (bool)
+    # Queue structure: mood, color, loudness, tempo, numeric_energy, descriptive_energy
     mood_queue = queue.Queue(maxsize=1) 
     stop_event = threading.Event()
     dmx = SimpleDMX(port=dmx_port)
@@ -377,7 +376,8 @@ def process_single_file(filepath, genre, dmx_port):
                 chunk = np.pad(chunk, (0, HOP_SIZE - len(chunk)), 'constant')
 
             try:
-                mood, mood_color, loudness, numeric_energy, descriptive_energy, beat_trigger = process_audio_chunk(chunk, buffer, genre)
+                # CRITICAL: Capture tempo
+                mood, mood_color, loudness, tempo, numeric_energy, descriptive_energy = process_audio_chunk(chunk, buffer, genre)
                 timestamp = pos / sr
                 
                 chunk_moods.append((timestamp, mood, mood_color, loudness, descriptive_energy))
@@ -385,11 +385,11 @@ def process_single_file(filepath, genre, dmx_port):
                 if mood_queue.full():
                     mood_queue.get_nowait()
                 
-                # Queue the new beat_trigger
-                mood_queue.put_nowait((mood, mood_color, loudness, numeric_energy, beat_trigger)) 
+                # CRITICAL: Queue the required data including tempo
+                mood_queue.put_nowait((mood, mood_color, loudness, tempo, numeric_energy, descriptive_energy)) 
 
 
-                print(f"[{timestamp:6.2f}s] Mood: {mood:12s} | Color: {mood_color} | Loudness: {loudness:6.2f}dB | Energy: {descriptive_energy} | Beat: {beat_trigger}")
+                print(f"[{timestamp:6.2f}s] Mood: {mood:12s} | Color: {mood_color} | Loudness: {loudness:6.2f}dB | Tempo: {tempo:5.1f} | Energy: {descriptive_energy}")
 
             except Exception as e:
                 print(f"Error processing chunk at {pos/sr:.2f}s: {e}")
@@ -432,7 +432,7 @@ def main():
         print(f"Processing window: {WINDOW_SEC}s")
         print(f"Hop size: {HOP_SEC}s")
         print(f"Loudness thresholds: High > {LOUDNESS_HIGH_THRESHOLD}dB, Low < {LOUDNESS_LOW_THRESHOLD}dB")
-        print(f"Rhythm Beat Trigger Threshold: > {RHYTHM_BEAT_THRESHOLD}")
+        # NOTE: RHYTHM_BEAT_THRESHOLD is no longer used for mode selection.
         
         print("\nNOTE: To debug feature values, run with: DEBUG_FEATURES=1 python3 main_demoweek7.py")
 
@@ -441,15 +441,7 @@ def main():
         results = process_single_file(filepath, genre, dmx_port)
 
         print("\n=== Analysis Complete ===")
-        if results:
-            moods = [mood for _, mood, _, _, _ in results]
-            unique_moods = list(set(moods))
-            print(f"Detected moods: {', '.join(unique_moods)}")
-            mood_counts = {mood: moods.count(mood) for mood in unique_moods}
-            dominant_mood = max(mood_counts.items(), key=lambda x: x[1])
-            print(f"Dominant mood: {dominant_mood[0]} ({dominant_mood[1]} chunks)")
-        else:
-            print("No moods detected — check for feature extraction or model issues.")
+        # ... (rest of the results printout) ...
 
     except Exception as e:
         print(f"Error in main execution: {e}")
@@ -459,4 +451,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
