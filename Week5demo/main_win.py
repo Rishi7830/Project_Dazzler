@@ -14,7 +14,7 @@ from tempo_detection import detect_tempo
 from loudness_detection import detect_loudness
 from mode_key_detection import detect_mode_key
 from audio_analyzer import process_audio_features
-from color_mapper import map_to_colors
+from color_mapper(old) import map_to_colors
 
 try:
     from pyserial import SimpleDMX
