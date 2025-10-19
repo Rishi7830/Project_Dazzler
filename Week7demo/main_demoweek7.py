@@ -24,15 +24,14 @@ HOP_SEC = 2.5
 WINDOW_SIZE = int(WINDOW_SEC * SR)
 HOP_SIZE = int(HOP_SEC * SR)
 
-# Loudness thresholds (Used for mode and brightness scaling)
+# Loudness thresholds (Used for brightness scaling)
 LOUDNESS_HIGH_THRESHOLD = -25.0   
 LOUDNESS_LOW_THRESHOLD = -45.0    
 
-# CRITICAL NEW CONSTANTS for Change Detection (Blinding)
-# Loudness: Absolute dB increase to trigger a change (e.g., jump of 5 dB)
-LOUDNESS_JUMP_THRESHOLD = 5.0  # dB
-# Tempo: Absolute BPM increase to trigger a change (e.g., jump of 15 BPM)
-TEMPO_JUMP_THRESHOLD = 15.0 # BPM 
+# CRITICAL HYBRID CONSTANT: Moderate threshold for rhythm detection
+# This determines when the light FLASHES (momentary strobe). 
+# A value between 0.5 (too frequent) and 0.95 (too rare) is the midpoint.
+RHYTHM_BEAT_THRESHOLD = 0.75 
 
 # DMX Channel Constants
 CH_PAN    = 1
@@ -47,7 +46,7 @@ CH_SOUND  = 9
 
 # Strobe channel value helpers
 VAL_LED_OFF     = 0
-VAL_STROBE_FLASH = 131 # Use a single value for a sharp flash
+VAL_STROBE_FLASH = 131 # Value for a sharp flash
 VAL_LED_START   = 255 # constant on (non-strobe state)
 
 class SimpleDMX:
@@ -56,7 +55,7 @@ class SimpleDMX:
         self.num_channels = 9
         self.data = [0] * self.num_channels
         self.running = False
-        self.flash_on = False # Use flash_on to signal a momentary event
+        self.flash_on = False 
         self.thread = None
         self.ser = None
 
@@ -97,20 +96,20 @@ class SimpleDMX:
         elif not self.ser:
             pass
 
-    # CRITICAL CHANGE: Blink based on 'blink_trigger', use loudness for dimming only
-    def update_lighting(self, color_rgbw, loudness: float, blink_trigger: bool):
+    # CRITICAL CHANGE: Flash is controlled by beat_trigger, Dimmer by loudness
+    def update_lighting(self, color_rgbw, loudness: float, beat_trigger: bool):
         if not self.ser:
             return
 
         self.set_channels_from_tuple(color_rgbw)
 
-        # 1. Handle Strobe/Blink
-        if blink_trigger:
+        # 1. Handle Strobe/Blink based on discrete beat event
+        if beat_trigger:
             self.flash_on = True
             # Set strobe to flash mode for one frame
             self.set_channel_internal(CH_STROBE, VAL_STROBE_FLASH)
         else:
-            # Revert to constant on (or a slower tempo strobe if desired, but constant on is safer)
+            # Revert to constant on (non-strobe mode)
             self.flash_on = False
             self.set_channel_internal(CH_STROBE, VAL_LED_START) 
 
@@ -145,7 +144,7 @@ class SimpleDMX:
             self.ser.flush()
             
             # CRITICAL: If a flash was sent, revert the channel immediately 
-            # so the next frame will be constant-on, creating a momentary flash.
+            # so the next frame will be constant-on, ensuring a momentary flash.
             if self.flash_on:
                 self.set_channel_internal(CH_STROBE, VAL_LED_START) 
                 self.flash_on = False
@@ -183,6 +182,7 @@ class SimpleDMX:
             print(f"Serial port {self.port} closed.")
 
 # --- HELPER FUNCTION TO GENERATE NUMERIC ENERGY ---
+# (Keeping this for completeness, though not strictly used by DMX in this version)
 def calculate_numeric_energy(loudness):
     loudness_range = LOUDNESS_HIGH_THRESHOLD - LOUDNESS_LOW_THRESHOLD
     if loudness_range <= 0: return 0.5 
@@ -228,8 +228,8 @@ def get_user_inputs():
 # === FEATURE + MOOD PROCESSING ===
 def process_audio_chunk(chunk, buffer, genre):
     """
-    Process one audio chunk and return mood, color, loudness, tempo, 
-    and descriptive energy.
+    Process one audio chunk and return mood, color, loudness, 
+    tempo, descriptive energy, and beat_trigger.
     """
     buffer.update(chunk)
     windowed_audio = buffer.get_window()
@@ -241,10 +241,13 @@ def process_audio_chunk(chunk, buffer, genre):
     rhythm = extract_rhythm(windowed_audio)
     harmony = extract_harmony(windowed_audio)
     
+    # --- RHYTHM BEAT TRIGGER LOGIC (HYBRID) ---
     rhythm_strength = rhythm[0] if isinstance(rhythm, (list, tuple)) and rhythm else 0.0
+    # Beat triggers flash only if the beat strength exceeds the moderate threshold
+    beat_trigger = rhythm_strength > RHYTHM_BEAT_THRESHOLD
     
     if os.environ.get('DEBUG_FEATURES') == '1':
-        print(f"  [DEBUG_FEAT] Mode={mode_key}, Tempo={tempo:.1f}, Loudness={loudness:.2f}, Rhythm={rhythm_strength:.2f}")
+        print(f"  [DEBUG_FEAT] Mode={mode_key}, Tempo={tempo:.1f}, Loudness={loudness:.2f}, Rhythm={rhythm_strength:.2f}, Beat={beat_trigger}")
 
     # Combine features
     features_processed = preprocess_features(mode_key,tempo,loudness,rhythm_strength,harmony)
@@ -259,7 +262,8 @@ def process_audio_chunk(chunk, buffer, genre):
 
     descriptive_energy = get_energy_level(loudness) 
 
-    return mood, mood_color, loudness, tempo, descriptive_energy
+    # Return beat_trigger instead of tempo
+    return mood, mood_color, loudness, descriptive_energy, beat_trigger
 
 
 # === LIGHTING CONTROLLER THREAD ===
@@ -270,7 +274,7 @@ def lighting_controller_thread(dmx: SimpleDMX, mood_queue, stop_event):
             return
 
         dmx.start_broadcast()
-        print("\nStarting DMX broadcast loop and change-reactive controller...")
+        print("\nStarting DMX broadcast loop and hybrid beat/loudness controller...")
 
         while not stop_event.is_set():
             try:
@@ -279,13 +283,13 @@ def lighting_controller_thread(dmx: SimpleDMX, mood_queue, stop_event):
                     while mood_queue.qsize() > 1:
                         mood_queue.get_nowait()
                         
-                    # CRITICAL: Receive blink_trigger
-                    mood, color, loudness, blink_trigger = mood_queue.get_nowait()
+                    # CRITICAL: Receive beat_trigger
+                    mood, color, loudness, beat_trigger = mood_queue.get_nowait()
                     
                     loudness = float(loudness)
 
-                    if blink_trigger:
-                        mode_desc = "JUMP-FLASH TRIGGERED"
+                    if beat_trigger:
+                        mode_desc = "BEAT-FLASH TRIGGERED"
                     elif loudness >= LOUDNESS_HIGH_THRESHOLD:
                          mode_desc = "High-Loudness (Bright)"
                     elif loudness <= LOUDNESS_LOW_THRESHOLD:
@@ -295,8 +299,8 @@ def lighting_controller_thread(dmx: SimpleDMX, mood_queue, stop_event):
 
                     print(f"  [DMX Update] Mood: {mood:12s} | Loudness: {loudness:6.2f}dB | Mode: {mode_desc}")
 
-                    # CRITICAL: Pass blink_trigger and loudness to the DMX controller
-                    dmx.update_lighting(color, loudness, blink_trigger)
+                    # CRITICAL: Pass loudness and beat_trigger
+                    dmx.update_lighting(color, loudness, beat_trigger)
 
             except queue.Empty:
                 pass
@@ -328,14 +332,10 @@ def process_single_file(filepath, genre, dmx_port):
 
     buffer = AudioBuffer(WINDOW_SIZE)
     chunk_moods = []
-    # Queue structure: mood, color, loudness, blink_trigger
+    # Queue structure: mood, color, loudness, beat_trigger
     mood_queue = queue.Queue(maxsize=1) 
     stop_event = threading.Event()
     dmx = SimpleDMX(port=dmx_port)
-
-    # State variables for change detection
-    prev_loudness = None
-    prev_tempo = None
 
     if not dmx.ser:
         print("Cannot start lighting. Continuing analysis only.")
@@ -361,38 +361,21 @@ def process_single_file(filepath, genre, dmx_port):
                 chunk = np.pad(chunk, (0, HOP_SIZE - len(chunk)), 'constant')
 
             try:
-                mood, mood_color, loudness, tempo, descriptive_energy = process_audio_chunk(chunk, buffer, genre)
+                # CRITICAL: Capture beat_trigger
+                mood, mood_color, loudness, descriptive_energy, beat_trigger = process_audio_chunk(chunk, buffer, genre)
                 timestamp = pos / sr
-                
-                # --- CRITICAL BLINK LOGIC FORMULA ---
-                blink_trigger = False
-                if prev_loudness is not None and prev_tempo is not None:
-                    # Calculate positive change (jump up)
-                    delta_loudness = loudness - prev_loudness
-                    delta_tempo = tempo - prev_tempo
-                    
-                    # The flash triggers only if both a significant Loudness INCREASE
-                    # AND a significant Tempo INCREASE occurred.
-                    if (delta_loudness >= LOUDNESS_JUMP_THRESHOLD and 
-                        delta_tempo >= TEMPO_JUMP_THRESHOLD):
-                        blink_trigger = True
-                # -----------------------------------
-                
-                # Update state for the next chunk
-                prev_loudness = loudness
-                prev_tempo = tempo
                 
                 chunk_moods.append((timestamp, mood, mood_color, loudness, descriptive_energy))
 
                 if mood_queue.full():
                     mood_queue.get_nowait()
                 
-                # CRITICAL: Queue the required data including blink_trigger
-                mood_queue.put_nowait((mood, mood_color, loudness, blink_trigger)) 
+                # CRITICAL: Queue the required data including beat_trigger
+                mood_queue.put_nowait((mood, mood_color, loudness, beat_trigger)) 
 
                 # Log output
-                jump_status = "JUMP!" if blink_trigger else "Steady"
-                print(f"[{timestamp:6.2f}s] Mood: {mood:12s} | Loudness: {loudness:6.2f}dB | Tempo: {tempo:5.1f} | Change: {jump_status}")
+                beat_status = "FLASH!" if beat_trigger else "Steady"
+                print(f"[{timestamp:6.2f}s] Mood: {mood:12s} | Loudness: {loudness:6.2f}dB | Energy: {descriptive_energy:6s} | Beat: {beat_status}")
 
             except Exception as e:
                 print(f"Error processing chunk at {pos/sr:.2f}s: {e}")
@@ -434,11 +417,9 @@ def main():
         print(f"DMX port: {dmx_port}")
         print(f"Processing window: {WINDOW_SEC}s")
         print(f"Hop size: {HOP_SEC}s")
-        print(f"Loudness thresholds: High > {LOUDNESS_HIGH_THRESHOLD}dB, Low < {LOUDNESS_LOW_THRESHOLD}dB")
-        print(f"\n*** JUMP TRIGGER FORMULA ***")
-        print(f"Blink only if:")
-        print(f"  Loudness increases by >= {LOUDNESS_JUMP_THRESHOLD} dB")
-        print(f"  AND Tempo increases by >= {TEMPO_JUMP_THRESHOLD} BPM")
+        print(f"\n*** HYBRID CONTROL PARAMETERS ***")
+        print(f"1. Dimmer/Brightness scales continuously with Loudness ({LOUDNESS_LOW_THRESHOLD}dB to {LOUDNESS_HIGH_THRESHOLD}dB).")
+        print(f"2. Strobe/Flash triggers when Rhythm Feature > {RHYTHM_BEAT_THRESHOLD} (the 'midpoint' threshold).")
         
         print("\nNOTE: To debug feature values, run with: DEBUG_FEATURES=1 python3 main_demoweek7.py")
 
@@ -457,4 +438,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
