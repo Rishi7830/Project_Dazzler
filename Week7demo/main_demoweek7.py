@@ -29,9 +29,8 @@ LOUDNESS_HIGH_THRESHOLD = -25.0
 LOUDNESS_LOW_THRESHOLD = -45.0    
 
 # CRITICAL HYBRID CONSTANT: Moderate threshold for rhythm detection
-# This determines when the light FLASHES (momentary strobe). 
-# A value between 0.5 (too frequent) and 0.95 (too rare) is the midpoint.
-RHYTHM_BEAT_THRESHOLD = 0.75 
+# Flash triggers when the beat strength exceeds this threshold. 0.85 is a good midpoint.
+RHYTHM_BEAT_THRESHOLD = 0.85 
 
 # DMX Channel Constants
 CH_PAN    = 1
@@ -114,15 +113,19 @@ class SimpleDMX:
             self.set_channel_internal(CH_STROBE, VAL_LED_START) 
 
         # 2. Handle Dimmer/Brightness based on continuous Loudness
+        # This gives the light its 'breathing' effect.
+        min_dimmer = 50
+        max_dimmer = 255
+        
         if loudness <= LOUDNESS_LOW_THRESHOLD:
-            dimmer_value = 50 
+            dimmer_value = min_dimmer 
         elif loudness >= LOUDNESS_HIGH_THRESHOLD:
-            dimmer_value = 255
+            dimmer_value = max_dimmer
         else:
-            # Scale brightness in the mid-range
-            mid_range = LOUDNESS_HIGH_THRESHOLD - LOUDNESS_LOW_THRESHOLD
-            loudness_scale = (loudness - LOUDNESS_LOW_THRESHOLD) / mid_range
-            dimmer_value = int(50 + loudness_scale * (255 - 50))
+            # Scale brightness smoothly in the mid-range
+            loudness_range = LOUDNESS_HIGH_THRESHOLD - LOUDNESS_LOW_THRESHOLD
+            loudness_scale = (loudness - LOUDNESS_LOW_THRESHOLD) / loudness_range
+            dimmer_value = int(min_dimmer + loudness_scale * (max_dimmer - min_dimmer))
             
         self.set_channel_internal(CH_DIMMER, dimmer_value)
 
@@ -182,7 +185,6 @@ class SimpleDMX:
             print(f"Serial port {self.port} closed.")
 
 # --- HELPER FUNCTION TO GENERATE NUMERIC ENERGY ---
-# (Keeping this for completeness, though not strictly used by DMX in this version)
 def calculate_numeric_energy(loudness):
     loudness_range = LOUDNESS_HIGH_THRESHOLD - LOUDNESS_LOW_THRESHOLD
     if loudness_range <= 0: return 0.5 
@@ -229,7 +231,7 @@ def get_user_inputs():
 def process_audio_chunk(chunk, buffer, genre):
     """
     Process one audio chunk and return mood, color, loudness, 
-    tempo, descriptive energy, and beat_trigger.
+    descriptive energy, and beat_trigger.
     """
     buffer.update(chunk)
     windowed_audio = buffer.get_window()
@@ -262,7 +264,7 @@ def process_audio_chunk(chunk, buffer, genre):
 
     descriptive_energy = get_energy_level(loudness) 
 
-    # Return beat_trigger instead of tempo
+    # Return beat_trigger
     return mood, mood_color, loudness, descriptive_energy, beat_trigger
 
 
@@ -284,6 +286,7 @@ def lighting_controller_thread(dmx: SimpleDMX, mood_queue, stop_event):
                         mood_queue.get_nowait()
                         
                     # CRITICAL: Receive beat_trigger
+                    # Queue structure: mood, color, loudness, beat_trigger
                     mood, color, loudness, beat_trigger = mood_queue.get_nowait()
                     
                     loudness = float(loudness)
@@ -417,9 +420,9 @@ def main():
         print(f"DMX port: {dmx_port}")
         print(f"Processing window: {WINDOW_SEC}s")
         print(f"Hop size: {HOP_SEC}s")
-        print(f"\n*** HYBRID CONTROL PARAMETERS ***")
+        print(f"\n*** HYBRID CONTROL PARAMETERS (The Midpoint) ***")
         print(f"1. Dimmer/Brightness scales continuously with Loudness ({LOUDNESS_LOW_THRESHOLD}dB to {LOUDNESS_HIGH_THRESHOLD}dB).")
-        print(f"2. Strobe/Flash triggers when Rhythm Feature > {RHYTHM_BEAT_THRESHOLD} (the 'midpoint' threshold).")
+        print(f"2. Strobe/Flash triggers when Rhythm Feature > {RHYTHM_BEAT_THRESHOLD} (Stronger beats only).")
         
         print("\nNOTE: To debug feature values, run with: DEBUG_FEATURES=1 python3 main_demoweek7.py")
 
