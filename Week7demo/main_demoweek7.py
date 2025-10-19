@@ -23,10 +23,11 @@ HOP_SEC = 2.5
 WINDOW_SIZE = int(WINDOW_SEC * SR)
 HOP_SIZE = int(HOP_SEC * SR)
 
-# Loudness thresholds (tunable)
-LOUDNESS_HIGH_THRESHOLD = -20   # dB, switch to high frequency/strobe above this
-LOUDNESS_LOW_THRESHOLD = -40    # dB, switch to low frequency/fade below this
-HIGH_ENERGY_THRESHOLD = 0.6     # Energy level threshold for high-intensity DMX mode (Numeric 0.0-1.0)
+# Loudness thresholds (ADJUSTED FOR CLASSICAL MUSIC DYNAMIC RANGE)
+# The previous range (-40dB to -20dB) caused -23dB to register as very high energy.
+LOUDNESS_HIGH_THRESHOLD = -25.0   # dB: Max average loudness for non-high energy segment
+LOUDNESS_LOW_THRESHOLD = -45.0    # dB: Min average loudness for non-low energy segment
+HIGH_ENERGY_THRESHOLD = 0.6       # Numeric energy threshold (0.0-1.0) for strobe/high-intensity DMX mode
 
 # === SimpleDMX Class and Constants ===
 
@@ -55,7 +56,6 @@ class SimpleDMX:
         self.data = [0] * self.num_channels
         self.running = False
         self.strobe_on = False
-        # Ensure initial strobe_interval is a standard float
         self.strobe_interval = float(strobe_interval) 
         self.color_to_strobe = (0, 0, 0, 0)
         self.thread = None
@@ -71,7 +71,6 @@ class SimpleDMX:
             )
             print(f"Serial port {self.port} opened successfully.")
             
-            # Initialize to safe/active defaults for 9CH mode
             self.set_channel_internal(CH_PAN, 0)
             self.set_channel_internal(CH_TILT, 0)
             self.set_channel_internal(CH_STROBE, VAL_LED_START) 
@@ -103,13 +102,13 @@ class SimpleDMX:
         if not self.ser:
             return
 
-        hue_speed = float(energy_level) # Ensure this is a standard float
+        hue_speed = float(energy_level)
 
         strobe_threshold = HIGH_ENERGY_THRESHOLD
         if hue_speed >= strobe_threshold:
             self.strobe_on = True
-            # Update self.strobe_interval, ensuring the result is a standard float
-            self.strobe_interval = max(0.05, 0.5 * (1.0 - hue_speed)) 
+            # Adjust strobe interval: faster for higher energy (e.g., 0.05s to 0.2s)
+            self.strobe_interval = float(max(0.05, 0.5 * (1.0 - hue_speed)))
             
             self.color_to_strobe = color_rgbw
             
@@ -152,15 +151,14 @@ class SimpleDMX:
         print("DMX broadcast thread started.")
         while self.running:
             self.send_frame()
-            # Calculate sleep_time
             sleep_time = self.strobe_on and self.strobe_interval or 0.03
             
-            # --- CRITICAL FIX: Cast to standard float to resolve TypeError ---
             try:
+                # CRITICAL FIX: Cast to standard float to resolve TypeError
                 time.sleep(float(sleep_time)) 
             except Exception as e:
                 print(f"[DMX Broadcast Error] Failed to sleep: {e}")
-                self.running = False # Stop the loop immediately on error
+                self.running = False 
                 break
                 
         print("DMX broadcast thread stopped.")
@@ -188,9 +186,9 @@ class SimpleDMX:
             self.ser.close()
             print(f"Serial port {self.port} closed.")
 
-# --- NEW HELPER FUNCTION TO GENERATE NUMERIC ENERGY ---
+# --- HELPER FUNCTION TO GENERATE NUMERIC ENERGY ---
 def calculate_numeric_energy(loudness):
-    """Calculates a numeric energy level (0.0 to 1.0) based on loudness."""
+    """Calculates a numeric energy level (0.0 to 1.0) based on loudness and adjusted thresholds."""
     
     loudness_range = LOUDNESS_HIGH_THRESHOLD - LOUDNESS_LOW_THRESHOLD
     if loudness_range <= 0:
@@ -198,7 +196,7 @@ def calculate_numeric_energy(loudness):
     
     scale = (loudness - LOUDNESS_LOW_THRESHOLD) / loudness_range
     
-    # Cast to float here just in case (though librosa should return floats)
+    # Cast to float and clamp the result
     return float(max(0.0, min(1.0, scale)))
 
 
@@ -253,10 +251,19 @@ def process_audio_chunk(chunk, buffer, genre):
     rhythm = extract_rhythm(windowed_audio)
     harmony = extract_harmony(windowed_audio)
 
+    # --- DEBUGGING STEP: Check if features are changing ---
+    if os.environ.get('DEBUG_FEATURES') == '1':
+        print(f"  [DEBUG_FEAT] Mode={mode_key}, Tempo={tempo:.1f}, Loudness={loudness:.2f}, Rhythm={rhythm[0]:.2f}, Harmony={harmony:.2f}")
+
     # Combine features
     features_processed = preprocess_features(mode_key,tempo,loudness,rhythm[0],harmony)
-    mood = predict_mood(features_processed)
-
+    
+    # Predict mood, default to a neutral/safe mood if classification fails
+    try:
+        mood = predict_mood(features_processed)
+    except Exception:
+        mood = "Calmness" # Use a neutral default if KNN or feature processing throws an error
+        
     rgb_color = map_mood_to_genre_color(mood, genre) 
     mood_color = rgb_color + (0,) # RGBW
 
@@ -285,17 +292,17 @@ def lighting_controller_thread(dmx: SimpleDMX, mood_queue, stop_event):
                         
                     mood, color, loudness, energy = mood_queue.get_nowait()
                     
-                    # Ensure all values are standard floats for DMX calculations
+                    # Ensure values are standard floats (robustness check)
                     loudness = float(loudness)
                     energy = float(energy)
 
-                    # Determine the mode description for logging
+                    # Determine the mode description for logging based on numeric loudness
                     if loudness >= LOUDNESS_HIGH_THRESHOLD:
-                        mode_desc = "High-Energy/Strobe"
+                        mode_desc = "High-Loudness/Strobe"
                     elif loudness <= LOUDNESS_LOW_THRESHOLD:
-                        mode_desc = "Low-Energy/Fade"
+                        mode_desc = "Low-Loudness/Fade"
                     else:
-                        mode_desc = "Mid-Energy"
+                        mode_desc = "Mid-Loudness"
 
                     print(f"  [DMX Update] Mood: {mood:12s} | Loudness: {loudness:6.2f}dB | Energy: {energy:.2f} (Numeric) | Mode: {mode_desc}")
 
@@ -366,9 +373,11 @@ def process_single_file(filepath, genre, dmx_port):
 
                 if mood_queue.full():
                     mood_queue.get_nowait()
+                # Queue: mood (str), color (tuple), loudness (float), numeric_energy (float)
                 mood_queue.put_nowait((mood, mood_color, loudness, numeric_energy)) 
 
 
+                # Log using the descriptive string for Energy
                 print(f"[{timestamp:6.2f}s] Mood: {mood:12s} | Color: {mood_color} | Loudness: {loudness:6.2f}dB | Energy: {descriptive_energy}")
 
             except Exception as e:
@@ -413,6 +422,9 @@ def main():
         print(f"Hop size: {HOP_SEC}s")
         print(f"Loudness thresholds: High > {LOUDNESS_HIGH_THRESHOLD}dB, Low < {LOUDNESS_LOW_THRESHOLD}dB")
         print(f"High Energy Threshold (for DMX strobe): > {HIGH_ENERGY_THRESHOLD}")
+        
+        # Add a note about the feature debug flag
+        print("\nNOTE: To debug feature values, run with: DEBUG_FEATURES=1 python3 main_demoweek7.py")
 
         input("\nPress Enter to start...")
 
