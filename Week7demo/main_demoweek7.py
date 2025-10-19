@@ -20,7 +20,8 @@ from mood_color_map import map_mood_to_genre_color, get_energy_level
 # === CONSTANTS ===
 SR = 44100
 WINDOW_SEC = 5.0
-HOP_SEC = 2.5
+# CRITICAL CHANGE: Drastically reduced HOP_SEC for low-latency, real-time updates (20 times per second)
+HOP_SEC = 0.05 
 WINDOW_SIZE = int(WINDOW_SEC * SR)
 HOP_SIZE = int(HOP_SEC * SR)
 
@@ -28,8 +29,7 @@ HOP_SIZE = int(HOP_SEC * SR)
 LOUDNESS_HIGH_THRESHOLD = -25.0   
 LOUDNESS_LOW_THRESHOLD = -45.0    
 
-# CRITICAL HYBRID CONSTANT: Moderate threshold for rhythm detection
-# Flash triggers when the beat strength exceeds this threshold. 0.85 is a good midpoint.
+# RHYTHM THRESHOLD: Flash triggers when the beat strength exceeds this threshold.
 RHYTHM_BEAT_THRESHOLD = 0.85 
 
 # DMX Channel Constants
@@ -95,7 +95,6 @@ class SimpleDMX:
         elif not self.ser:
             pass
 
-    # CRITICAL CHANGE: Flash is controlled by beat_trigger, Dimmer by loudness
     def update_lighting(self, color_rgbw, loudness: float, beat_trigger: bool):
         if not self.ser:
             return
@@ -113,7 +112,6 @@ class SimpleDMX:
             self.set_channel_internal(CH_STROBE, VAL_LED_START) 
 
         # 2. Handle Dimmer/Brightness based on continuous Loudness
-        # This gives the light its 'breathing' effect.
         min_dimmer = 50
         max_dimmer = 255
         
@@ -146,8 +144,7 @@ class SimpleDMX:
             self.ser.write(frame)
             self.ser.flush()
             
-            # CRITICAL: If a flash was sent, revert the channel immediately 
-            # so the next frame will be constant-on, ensuring a momentary flash.
+            # If a flash was sent, revert the channel immediately 
             if self.flash_on:
                 self.set_channel_internal(CH_STROBE, VAL_LED_START) 
                 self.flash_on = False
@@ -178,7 +175,9 @@ class SimpleDMX:
     def close(self):
         self.stop_broadcast()
         if self.ser and self.ser.is_open:
-            self.clear_color_channels()
+            # Clear DMX output before closing
+            for i in range(1, self.num_channels + 1):
+                self.set_channel_internal(i, 0)
             self.send_frame()
             time.sleep(0.1)
             self.ser.close()
@@ -243,7 +242,7 @@ def process_audio_chunk(chunk, buffer, genre):
     rhythm = extract_rhythm(windowed_audio)
     harmony = extract_harmony(windowed_audio)
     
-    # --- RHYTHM BEAT TRIGGER LOGIC (HYBRID) ---
+    # --- RHYTHM BEAT TRIGGER LOGIC ---
     rhythm_strength = rhythm[0] if isinstance(rhythm, (list, tuple)) and rhythm else 0.0
     # Beat triggers flash only if the beat strength exceeds the moderate threshold
     beat_trigger = rhythm_strength > RHYTHM_BEAT_THRESHOLD
@@ -285,7 +284,6 @@ def lighting_controller_thread(dmx: SimpleDMX, mood_queue, stop_event):
                     while mood_queue.qsize() > 1:
                         mood_queue.get_nowait()
                         
-                    # CRITICAL: Receive beat_trigger
                     # Queue structure: mood, color, loudness, beat_trigger
                     mood, color, loudness, beat_trigger = mood_queue.get_nowait()
                     
@@ -302,7 +300,6 @@ def lighting_controller_thread(dmx: SimpleDMX, mood_queue, stop_event):
 
                     print(f"  [DMX Update] Mood: {mood:12s} | Loudness: {loudness:6.2f}dB | Mode: {mode_desc}")
 
-                    # CRITICAL: Pass loudness and beat_trigger
                     dmx.update_lighting(color, loudness, beat_trigger)
 
             except queue.Empty:
@@ -364,7 +361,6 @@ def process_single_file(filepath, genre, dmx_port):
                 chunk = np.pad(chunk, (0, HOP_SIZE - len(chunk)), 'constant')
 
             try:
-                # CRITICAL: Capture beat_trigger
                 mood, mood_color, loudness, descriptive_energy, beat_trigger = process_audio_chunk(chunk, buffer, genre)
                 timestamp = pos / sr
                 
@@ -373,7 +369,7 @@ def process_single_file(filepath, genre, dmx_port):
                 if mood_queue.full():
                     mood_queue.get_nowait()
                 
-                # CRITICAL: Queue the required data including beat_trigger
+                # Queue the required data including beat_trigger
                 mood_queue.put_nowait((mood, mood_color, loudness, beat_trigger)) 
 
                 # Log output
@@ -418,10 +414,10 @@ def main():
         print(f"Genre: {genre}")
         print(f"Audio file: {filepath}")
         print(f"DMX port: {dmx_port}")
-        print(f"Processing window: {WINDOW_SEC}s")
-        print(f"Hop size: {HOP_SEC}s")
-        print(f"\n*** HYBRID CONTROL PARAMETERS (The Midpoint) ***")
-        print(f"1. Dimmer/Brightness scales continuously with Loudness ({LOUDNESS_LOW_THRESHOLD}dB to {LOUDNESS_HIGH_THRESHOLD}dB).")
+        print(f"Analysis window: {WINDOW_SEC}s")
+        print(f"**Update frequency (Hop size): {HOP_SEC}s**")
+        print(f"\n*** HYBRID CONTROL PARAMETERS (Low Latency) ***")
+        print(f"1. Dimmer/Brightness scales continuously with Loudness.")
         print(f"2. Strobe/Flash triggers when Rhythm Feature > {RHYTHM_BEAT_THRESHOLD} (Stronger beats only).")
         
         print("\nNOTE: To debug feature values, run with: DEBUG_FEATURES=1 python3 main_demoweek7.py")
@@ -431,7 +427,6 @@ def main():
         results = process_single_file(filepath, genre, dmx_port)
 
         print("\n=== Analysis Complete ===")
-        # ... (rest of the results printout) ...
 
     except Exception as e:
         print(f"Error in main execution: {e}")
