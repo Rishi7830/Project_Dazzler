@@ -107,7 +107,7 @@ def stream_mp3_realtime(
     channels: int = 1,
     audio_block: int = 1024,
     chunk_seconds: float = 0.25,
-    hop_ratio: float = 1.0,
+    hop_ratio: float = 0.5,
     save_json: bool = True,
 ):
     """
@@ -270,4 +270,5 @@ if __name__ == "__main__":
         dmx.stop_broadcast()
         dmx.close()
         print("\n[END] DMX broadcast stopped and port closed.")
+
 
