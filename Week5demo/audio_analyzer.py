@@ -9,24 +9,30 @@ from typing import Tuple
 
 def process_audio_features(loudness: float, mode: str, key: str, tempo: float) -> Tuple[tuple, float]:
     """
-    Process audio features and convert to color and hue cycling speed.
+    Process audio features and convert to color and hue cycling speed
     
-    CRITICAL FIX: Overriding tempo-based hue_speed with loudness for responsiveness.
+    Args:
+        loudness (float): Loudness in dB
+        mode (str): Musical mode ("major" or "minor")
+        key (str): Musical key ("C", "D", "F#", etc.)
+        tempo (float): Tempo in BPM
+        
+    Returns:
+        tuple: (color_rgb, hue_speed)
+            - color_rgb: RGB color tuple (r, g, b) values 0-255
+            - hue_speed: Hue cycling speed (0.0-2.0, higher = faster)
     """
     
-    # 1. Generate base color from key and mode
+    # Generate base color from key and mode
     base_color = key_to_color(key, mode)
     
-    # 2. Adjust color saturation/brightness based on loudness
+    # Adjust color saturation/brightness based on loudness
     adjusted_color = adjust_color_by_loudness(base_color, loudness)
     
-    L_MIN = 5.0   # The quietest part for a slow-moving light
-    L_MAX = 100.0 # The loudest part for max speed (Based on your logs maxing at ~220 dB, 100 is a safe threshold)
-    normalized_loudness = np.clip((loudness - L_MIN) / (L_MAX - L_MIN), 0.0, 1.0)
-    hue_speed = 0.1 + (normalized_loudness * 1.9) # Range 0.1 (low) to 2.0 (high)
-    feature_output = adjusted_color 
+    # Generate hue cycling speed from tempo
+    hue_speed = tempo_to_hue_speed(tempo)
     
-    return feature_output, float(hue_speed)
+    return adjusted_color, hue_speed
 
 def key_to_color(key: str, mode: str) -> tuple:
     """
