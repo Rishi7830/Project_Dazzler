@@ -11,7 +11,7 @@ from Buffer_Manager_Week7 import AudioBuffer
 # Feature Modules (must be present in your directory)
 from Mode_Extraction_Week7 import detect_mode_key
 from Tempo_detection_week7 import detect_tempo 
-from Loudness_detection_week7 import detect_loudness
+from Loudness_detection_Week7 import detect_loudness
 from Rhythm_Detection_Week7 import extract_rhythm 
 from Harmony_detection_Week7 import extract_harmony
 from KNN_Week7 import preprocess_features, predict_mood
@@ -457,3 +457,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
