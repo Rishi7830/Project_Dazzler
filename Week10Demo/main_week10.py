@@ -71,7 +71,7 @@ def _suggest_default_port() -> str:
         return os.environ.get("DAZZLER_DMX_PORT", "COM3") 
     if sysname == "darwin":
         return os.environ.get("DAZZLER_DMX_PORT", "/dev/tty.usbserial") 
-    return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB0") 
+    return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB1") 
 
 
 class _NoopDMX:
