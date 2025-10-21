@@ -5,7 +5,6 @@ import numpy as np
 
 # Dependencies: pip install essentia numpy
 import essentia.standard as es
-touch ../ONSET/__init__.py
 
 
 # ---- Tunable parameters (from your training) ----
