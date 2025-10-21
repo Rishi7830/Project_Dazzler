@@ -72,9 +72,9 @@ def get_energy_level(loudness_db):
     # Assuming the input loudness_db is relative (e.g., max is around 40-50 dB in logs)
     # The logic in main.py passes the raw loudness detected from the chunk.
     # We will keep the thresholds general.
-    if loudness_db > 40: # High volume
+    if loudness_db > 100: # High volume
         return "high"
-    elif loudness_db > 20: # Medium volume
+    elif loudness_db > 40: # Medium volume
         return "medium"
     else:
         return "low"
