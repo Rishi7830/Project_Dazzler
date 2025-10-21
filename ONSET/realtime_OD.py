@@ -177,3 +177,73 @@ if __name__ == '__main__':
         print('No input provided.')
         sys.exit(1)
     simulate_realtime_mp3(mp3_path)
+
+# --- Add this to expose a reusable onset detection class ---
+class RealtimeOnsetDetector:
+    def __init__(self, sample_rate=44100):
+        self.hop_sec = HOP_SIZE / sample_rate
+        self.ema_fast = CausalEMA(self.hop_sec, 0.25)
+        self.ema_slow = CausalEMA(self.hop_sec, 1.0)
+        self.ema_loud = CausalEMA(self.hop_sec, 0.25)
+        self.ema_nov = CausalEMA(self.hop_sec, 0.25)
+        self.novelty_buf = []
+        self.hfc_hist = []
+        self.loud_hist = []
+        self.preN = max(1, int(PRE_WIN_SEC / self.hop_sec))
+        self.postN = max(1, int(POST_WIN_SEC / self.hop_sec))
+        self.min_spacing = MIN_SPACING_SEC
+        self.last_emit_time = -1e9
+        self.last_audio_time = 0.0
+
+    def is_onset(self, frame, curr_time):
+        hfc_raw = compute_hfc_val(frame)
+        loud_db = frame_loudness_db(frame)
+        hfc_f = self.ema_fast.push(hfc_raw)
+        hfc_s = self.ema_slow.push(hfc_raw)
+        loud_s = self.ema_loud.push(loud_db)
+        self.hfc_hist.append(hfc_f)
+        self.loud_hist.append(loud_s)
+        d_hfc_fast = abs(self.hfc_hist[-1] - self.hfc_hist[-2]) if len(self.hfc_hist) >= 2 else 0.0
+        d_hfc_slow = abs(hfc_s - (self.hfc_hist[-2] if len(self.hfc_hist) >= 2 else hfc_s)) if len(self.hfc_hist) >= 2 else 0.0
+        d_loud = abs(self.loud_hist[-1] - self.loud_hist[-2]) if len(self.loud_hist) >= 2 else 0.0
+        w1, w2, w3 = W_WEIGHTS
+        novelty_raw = w1 * d_hfc_fast + w2 * d_hfc_slow + w3 * d_loud
+        novelty = self.ema_nov.push(novelty_raw)
+        self.novelty_buf.append(novelty)
+        if len(self.novelty_buf) > max(1, int(PERC_WINDOW_SEC / self.hop_sec)):
+            self.novelty_buf.pop(0)
+        thr = rolling_percentile(self.novelty_buf, PERCENTILE)
+        over_thr = novelty > thr
+        spacing_ok = (curr_time - self.last_emit_time) >= self.min_spacing
+        # post-confirmation logic simplified for pipeline speed
+        if over_thr and spacing_ok and len(self.hfc_hist) >= (self.preN + self.postN + 2):
+            scale = mad_scale(self.hfc_hist[-min(len(self.hfc_hist), int(5.0 / self.hop_sec)):])
+            h_pre = float(np.mean(self.hfc_hist[-self.preN:])) if self.preN > 0 else 0.0
+            h_post = float(np.mean(self.hfc_hist[-self.postN:])) if self.postN > 0 else 0.0
+            l_pre = float(np.mean(self.loud_hist[-self.preN:])) if self.preN > 0 else 0.0
+            l_post = float(np.mean(self.loud_hist[-self.postN:])) if self.postN > 0 else 0.0
+            h_jump = abs(h_post - h_pre) / max(scale, 1e-6)
+            l_jump = abs(l_post - l_pre)
+            if (h_jump >= HFC_JUMP_K) or (l_jump >= LOUD_JUMP_DB):
+                self.last_emit_time = curr_time
+                return True, loud_db
+        return False, loud_db
+
+
+# --- Add this to expose a reusable onset detection class ---
+class RealtimeOnsetDetector:
+    def __init__(self, sample_rate=44100):
+        self.hop_sec = HOP_SIZE / sample_rate
+        self.ema_fast = CausalEMA(self.hop_sec, 0.25)
+        self.ema_slow = CausalEMA(self.hop_sec, 1.0)
+        self.ema_loud = CausalEMA(self.hop_sec, 0.25)
+        self.ema_nov = CausalEMA(self.hop_sec, 0.25)
+        self.novelty_buf = []
+        self.hfc_hist = []
+        self.loud_hist = []
+        self.preN = max(1, int(PRE_WIN_SEC / self.hop_sec))
+        self.postN = max(1, int(POST_WIN_SEC / self.hop_sec))
+        self.min_spacing = MIN_SPACING_SEC
+        self.last_emit_time = -1e9
+        self.last_audio_time = 0.0
+
