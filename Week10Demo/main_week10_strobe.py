@@ -1,5 +1,3 @@
-""" Realtime MP3 → Feature Analysis + DMX output with Onset-Triggered, Tempo-Synced Strobe """
-
 import os
 import time
 import platform
@@ -9,14 +7,12 @@ import numpy as np
 import traceback
 from pathlib import Path
 
-# --- Custom Feature Modules ---
 from tempo_detection import detect_tempo
 from loudness_detection import detect_loudness
 from mode_key_detection import detect_mode_key
 from audio_analyzer import process_audio_features
 from color_mapper import get_available_genres, genre_color_palettes, map_features_to_genre_color
 
-# --- Onset Detector Import ---
 from HFC_Realtime import RealtimeOnsetDetector
 
 try:
@@ -105,7 +101,6 @@ def stream_mp3_realtime(
         print("[ERR] ffmpeg not found in PATH; install ffmpeg and retry")
         return
 
-    # 3-2-1 countdown
     countdown_colors = [(255, 0, 0, 0), (255, 128, 0, 0), (255, 255, 0, 0)]
     for i, color in enumerate(reversed(countdown_colors), start=1):
         dmx.update_lighting(color, hue_speed=0)
@@ -120,9 +115,8 @@ def stream_mp3_realtime(
     results = []
     start_time = time.time()
 
-    # --- Onset Detector Initialization ---
     onset_detector = RealtimeOnsetDetector(sample_rate=sample_rate)
-    LOUD_THRESH = -18.0 # You can tune this or update dynamically!
+    LOUD_THRESH = -18.0
 
     print(f"[RUN] Streaming {Path(mp3_path).name} ({genre.title()}) - chunk={chunk_seconds}s, hop={hop_ratio}")
     try:
@@ -134,7 +128,6 @@ def stream_mp3_realtime(
             block = np.frombuffer(raw, dtype=np.float32)
             analysis_buffer = np.concatenate((analysis_buffer, block))
             while analysis_buffer.size >= chunk_samples:
-
                 time_position = (len(results) * hop_samples) / sample_rate
                 actual_elapsed_time = time.time() - start_time
                 sleep_needed = time_position - actual_elapsed_time
@@ -148,12 +141,10 @@ def stream_mp3_realtime(
                 feature_output, hue_speed = process_audio_features(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
-
                 mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
                 r, g, b = mapped_rgb
                 rgbw = (int(r), int(g), int(b), 0)
 
-                # --- ONSET + STROBE LOGIC ---
                 onset, curr_loudness = onset_detector.is_onset(window, time_position)
                 strobe_interval = 60.0 / max(tempo, 1)
                 should_strobe = onset and (curr_loudness > LOUD_THRESH)
@@ -166,6 +157,7 @@ def stream_mp3_realtime(
                     dmx.update_lighting(rgbw, hue_speed)
 
                 print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Feature:{str(feature_output):12s} - RGB{rgbw[:3]} {'[STROBE]' if should_strobe else ''}")
+
                 results.append({
                     "time_position": time_position,
                     "features": {
