@@ -2,8 +2,11 @@ import time, math, sys
 from pathlib import Path
 import numpy as np
 
+
 # Dependencies: pip install essentia numpy
 import essentia.standard as es
+touch ~/Dazzler/ONSET/__init__.py
+
 
 # ---- Tunable parameters (from your training) ----
 FRAME_SIZE = 1024
