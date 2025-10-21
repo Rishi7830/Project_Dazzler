@@ -1,6 +1,6 @@
 """
 Realtime MP3 → Feature Analysis + DMX output.
-FINAL VERSION: Includes Real-Time Synchronization and Loudness-Based Color Mapping.
+FINAL VERSION: Includes Real-Time Synchronization, Loudness-Based Color Mapping, and Strobe Effect.
 """
 
 import os
@@ -144,8 +144,7 @@ def stream_mp3_realtime(
     analysis_buffer = np.empty(0, dtype=np.float32)
     results = []
     
-    start_time = time.time() # Capture the exact moment the stream begins
-    
+    start_time = time.time()
     print(f"[RUN] Streaming {Path(mp3_path).name} ({genre.title()}) - chunk={chunk_seconds}s, hop={hop_ratio}")
 
     try:
@@ -154,7 +153,7 @@ def stream_mp3_realtime(
             if not raw or len(raw) < frame_bytes:
                 break
             
-            time.sleep(0.001) 
+            time.sleep(0.001)
 
             block = np.frombuffer(raw, dtype=np.float32)
             analysis_buffer = np.concatenate((analysis_buffer, block))
@@ -180,15 +179,23 @@ def stream_mp3_realtime(
                 r, g, b = mapped_rgb
                 
                 # --- DMX Output for 2 Lights ---
-                # Light1 channels 1-9
                 rgbw1 = (int(r), int(g), int(b), 0)
-                # Light2 channels 10-18 (daisy chained)
                 rgbw2 = (int(r), int(g), int(b), 0)
                 
-                # Build full 18-channel DMX array
-                full_dmx = list(rgbw1) + [0]*(9-4) + list(rgbw2) + [0]*(9-4)
-                
-                dmx.update_lighting(full_dmx, hue_speed)
+                # Apply strobe if loudness > 80 dB
+                if loudness > 80:
+                    for _ in range(3):  # strobe 3 times quickly
+                        # On
+                        full_dmx = list(rgbw1) + [0]*(9-4) + list(rgbw2) + [0]*(9-4)
+                        dmx.update_lighting(full_dmx, hue_speed)
+                        time.sleep(0.05)
+                        # Off
+                        full_dmx_off = [0]*18
+                        dmx.update_lighting(full_dmx_off, hue_speed)
+                        time.sleep(0.05)
+                else:
+                    full_dmx = list(rgbw1) + [0]*(9-4) + list(rgbw2) + [0]*(9-4)
+                    dmx.update_lighting(full_dmx, hue_speed)
                 
                 print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Feature:{str(feature_output):12s} -> RGB{rgbw1[:3]}")
 
