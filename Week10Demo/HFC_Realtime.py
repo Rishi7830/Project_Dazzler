@@ -1,225 +1,251 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
+import time, math, sys
+from pathlib import Path
 import numpy as np
-from collections import deque
-from dataclasses import dataclass
-import essentia.standard as es
-from scipy.ndimage import uniform_filter1d
 
-# --------------- Utilities ---------------
+
+# Dependencies: pip install essentia numpy
+import essentia.standard as es
+touch ~/Dazzler/ONSET/__init__.py
+
+
+# ---- Tunable parameters (from your training) ----
+FRAME_SIZE = 1024
+HOP_SIZE = 512
+W_WEIGHTS = (0.6, 0.2, 0.2)     # (ΔHFC_fast, ΔHFC_slow, ΔLoud)
+PERCENTILE = 90.0               # rolling percentile threshold
+PERC_WINDOW_SEC = 15.0          # window for adaptive threshold
+MIN_SPACING_SEC = 8.0           # minimum spacing between boundaries
+PRE_WIN_SEC = 1.0               # pre window for confirmation
+POST_WIN_SEC = 0.8              # post window for confirmation (controls latency)
+HFC_JUMP_K = 1.2                # MAD-scaled HFC jump threshold
+LOUD_JUMP_DB = 2.5              # absolute loudness jump threshold (dB)
+
+# --------------------------------------------------
+
+class CausalEMA:
+    def __init__(self, hop_sec, tau_sec):
+        a = hop_sec / max(tau_sec, hop_sec)
+        self.a = float(np.clip(a, 0.0, 1.0))
+        self.y = None
+    def push(self, x):
+        if self.y is None:
+            self.y = float(x)
+        else:
+            self.y = self.a*float(x) + (1.0-self.a)*self.y
+        return self.y
+
+def rolling_percentile(values, perc):
+    arr = np.asarray(values, dtype=float)
+    if len(arr) == 0:
+        return 0.0
+    return float(np.percentile(arr, perc))
 
 def frame_loudness_db(frame):
-    # Simple RMS loudness in dBFS; add epsilon to avoid log(0)
-    rms = np.sqrt(np.mean(frame**2) + 1e-12)
-    return 20.0 * np.log10(rms + 1e-12)
+    rms = float(np.sqrt(np.mean(frame**2) + 1e-12))
+    return 20.0 * math.log10(rms + 1e-12)
 
-@dataclass
-class Params:
-    frame_size: int = 1024
-    hop_size: int = 512
-    short_smooth_sec: float = 0.25    # ~250 ms
-    slow_smooth_sec: float = 1.0      # ~1 s for slower trend
-    novelty_weights: tuple = (0.6, 0.2, 0.2)  # (ΔHFC, ΔHFC_slow, ΔLoud)
-    percentile_window_sec: float = 15.0
-    threshold_percentile: float = 85.0
-    min_spacing_sec: float = 5.0
-    pre_win_sec: float = 1.0
-    post_win_sec: float = 0.8         # adds latency; set 0 for immediate
-    hfc_jump_k: float = 0.8           # multiples of MAD
-    loud_jump_db: float = 1.5         # dB change to accept
-    sample_rate: int = 44100
+def compute_hfc_val(frame):
+    # HFC ODF proxy: sum_k k * |X[k]|^2 (bin index weighted power)
+    win = np.hanning(len(frame)).astype(np.float32)
+    frw = frame * win
+    fftv = np.fft.rfft(frw)
+    mag = np.abs(fftv).astype(np.float32)
+    return float(np.sum(np.arange(len(mag)) * (mag**2)))
 
-class OnlineSmootherIIR:
-    def __init__(self, hop_sec, time_const_sec):
-        alpha = hop_sec / max(time_const_sec, hop_sec)
-        self.alpha = float(np.clip(alpha, 0.0, 1.0))
-        self.y = None
+def simulate_realtime_mp3(mp3_path):
+    if not Path(mp3_path).exists():
+        print('File not found:', mp3_path)
+        return
 
-    def update_vec(self, x):
-        # causal IIR y[t] = a*x[t] + (1-a)*y[t-1]
-        out = np.empty_like(x, dtype=float)
-        for i, xi in enumerate(x):
-            if self.y is None:
-                self.y = xi
-            else:
-                self.y = self.alpha * xi + (1 - self.alpha) * self.y
-            out[i] = self.y
-        return out
+    # Load audio
+    loader = es.MonoLoader(filename=str(mp3_path))
+    audio = loader()
+    sr = loader.paramValue('sampleRate')
+    hop_sec = HOP_SIZE / sr
 
-class PercentileThresh:
-    def __init__(self, capacity):
-        self.buf = deque(maxlen=capacity)
+    # Frame the audio
+    frames = list(es.FrameGenerator(audio, frameSize=FRAME_SIZE, hopSize=HOP_SIZE, startFromZero=True))
+    if not frames:
+        print('No frames read; check file.', file=sys.stderr)
+        return
 
-    def update(self, x_values):
-        self.buf.extend(x_values)
+    # Causal smoothers
+    ema_fast = CausalEMA(hop_sec, 0.25)
+    ema_slow = CausalEMA(hop_sec, 1.0)
+    ema_loud = CausalEMA(hop_sec, 0.25)
+    ema_nov = CausalEMA(hop_sec, 0.25)
 
-    def percentile(self, p):
-        if not self.buf:
-            return 0.0
-        return float(np.percentile(np.array(self.buf), p))
+    # Buffers
+    perc_window = max(1, int(PERC_WINDOW_SEC / hop_sec))
+    novelty_buf = []             # for rolling percentile
+    hfc_hist = []                # for confirmation window
+    loud_hist = []
 
-class OnlineBoundaryDetector:
-    def __init__(self, params: Params):
-        self.p = params
-        hop_sec = params.hop_size / params.sample_rate
+    preN = max(1, int(PRE_WIN_SEC / hop_sec))
+    postN = max(1, int(POST_WIN_SEC / hop_sec))
+    min_spacing = MIN_SPACING_SEC
 
-        # Essentia ops
-        self.win = es.Windowing(type='hann')
-        self.fft = es.FFT()
-        self.c2p = es.CartesianToPolar()
-        self.od = es.OnsetDetection(method='hfc')
+    last_emit_time = -1e9
 
-        # State buffers
-        self.hfc_s = []        # smoothed short
-        self.hfc_sl = []       # smoothed slow
-        self.loud_s = []       # smoothed short
-        self.time = []         # seconds for each frame center
-        self.last_time = 0.0
+    # MAD scaler for HFC fast
+    def mad_scale(arr):
+        if len(arr) < 20:
+            return 1.0
+        med = np.median(arr)
+        mad = np.median(np.abs(np.asarray(arr) - med))
+        return float(max(mad, 1e-6))
 
-        # Causal smoothers
-        self.hfc_smoother = OnlineSmootherIIR(hop_sec, params.short_smooth_sec)
-        self.hfc_slow_smoother = OnlineSmootherIIR(hop_sec, params.slow_smooth_sec)
-        self.loud_smoother = OnlineSmootherIIR(hop_sec, params.short_smooth_sec)
+    print('Simulating real-time playback...')
+    t_start = time.perf_counter()
 
-        # Novelty and threshold
-        cap = int(params.percentile_window_sec / hop_sec)
-        self.nov_hist = PercentileThresh(capacity=max(cap, 1))
-        self.novelty = []
+    for i, fr in enumerate(frames):
+        t_audio = i * hop_sec
 
-        # Gating and stats
-        self.mad_hist = deque(maxlen=2000)  # for robust HFC scale (MAD)
-        self.cooldown_until = -1.0
-        self.pending_candidate = None  # (t_peak)
+        # Feature extraction per frame
+        hfc_raw = compute_hfc_val(fr)
+        loud_db = frame_loudness_db(fr)
 
-        # ring buffers for pre/post means
-        self.hfc_ring = deque(maxlen=int(3 * params.pre_win_sec / hop_sec))
-        self.loud_ring = deque(maxlen=int(3 * params.pre_win_sec / hop_sec))
+        hfc_f = ema_fast.push(hfc_raw)
+        hfc_s = ema_slow.push(hfc_raw)
+        loud_s = ema_loud.push(loud_db)
 
-    def process_chunk(self, audio_chunk):
-        p = self.p
-        hop = p.hop_size
-        fs = p.sample_rate
-        hop_sec = hop / fs
+        # Maintain histories
+        hfc_hist.append(hfc_f)
+        loud_hist.append(loud_s)
 
-        # STFT framing over the chunk
-        frames = list(es.FrameGenerator(audio_chunk, frameSize=p.frame_size, hopSize=hop, startFromZero=True))
-        if not frames:
-            return []
+        # Deltas (absolute)
+        if len(hfc_hist) >= 2:
+            d_hfc_fast = abs(hfc_hist[-1] - hfc_hist[-2])
+        else:
+            d_hfc_fast = 0.0
+        if len(hfc_hist) >= 2:
+            d_hfc_slow = abs(hfc_s - (hfc_hist[-2] if len(hfc_hist)>=2 else hfc_s))
+        else:
+            d_hfc_slow = 0.0
+        if len(loud_hist) >= 2:
+            d_loud = abs(loud_hist[-1] - loud_hist[-2])
+        else:
+            d_loud = 0.0
 
-        # Compute HFC and per-frame loudness
-        hfc_raw = []
-        loud_raw = []
-        for fr in frames:
-            mag, ph = self.c2p(self.fft(self.win(fr)))
-            hfc_raw.append(self.od(mag, ph))
-            loud_raw.append(frame_loudness_db(fr))
-        hfc_raw = np.asarray(hfc_raw, dtype=float)
-        loud_raw = np.asarray(loud_raw, dtype=float)
+        # Novelty and smoothing (fix: compute before smoothing, then smooth)
+        w1, w2, w3 = W_WEIGHTS
+        novelty_raw = w1*d_hfc_fast + w2*d_hfc_slow + w3*d_loud
+        novelty = ema_nov.push(novelty_raw)
 
-        # Causal smoothing
-        hfc_sm = self.hfc_smoother.update_vec(hfc_raw)
-        hfc_sl = self.hfc_slow_smoother.update_vec(hfc_raw)
-        loud_sm = self.loud_smoother.update_vec(loud_raw)
+        # Rolling percentile threshold (online approximation)
+        novelty_buf.append(novelty)
+        if len(novelty_buf) > perc_window:
+            novelty_buf.pop(0)
+        thr = rolling_percentile(novelty_buf, PERCENTILE)
 
-        # Append to state and build times
-        n = len(hfc_sm)
-        t0 = self.last_time
-        times = t0 + np.arange(n) * hop_sec
-        self.last_time = times[-1] + hop_sec
+        # Candidate decision
+        over_thr = novelty > thr
+        spacing_ok = (t_audio - last_emit_time) >= min_spacing
 
-        self.hfc_s.extend(hfc_sm.tolist())
-        self.hfc_sl.extend(hfc_sl.tolist())
-        self.loud_s.extend(loud_sm.tolist())
-        self.time.extend(times.tolist())
+        # Post confirmation using pre/post windows
+        if over_thr and spacing_ok and len(hfc_hist) >= (preN + postN + 2):
+            pre_h = hfc_hist[-(preN + postN + 1) : -(postN + 1)] if (preN + postN + 1) <= len(hfc_hist) else hfc_hist[:-1]
+            post_h = hfc_hist[-postN:] if postN > 0 else []
 
-        # maintain MAD history for scaling
-        self.mad_hist.extend(hfc_sm.tolist())
-        med = np.median(self.mad_hist) if self.mad_hist else 0.0
-        mad = np.median(np.abs(np.array(self.mad_hist) - med)) + 1e-8
+            pre_l = loud_hist[-(preN + postN + 1) : -(postN + 1)] if (preN + postN + 1) <= len(loud_hist) else loud_hist[:-1]
+            post_l = loud_hist[-postN:] if postN > 0 else []
 
-        # Novelty components (first differences)
-        def diff_abs(x):  # compute on the new part only
-            if len(x) < 2:
-                return np.zeros_like(x)
-            d = np.abs(np.diff(x))
-            return np.concatenate([[d[0]], d])  # align lengths
-        d_hfc = diff_abs(hfc_sm)
-        d_hfc_slow = diff_abs(hfc_sl)
-        d_loud = diff_abs(loud_sm)
+            if len(pre_h) >= 1 and len(post_h) >= 1:
+                h_pre = float(np.mean(pre_h[-preN:])) if preN > 0 else 0.0
+                h_post = float(np.mean(post_h))
+                l_pre = float(np.mean(pre_l[-preN:])) if preN > 0 else 0.0
+                l_post = float(np.mean(post_l))
 
-        w1, w2, w3 = p.novelty_weights
-        novelty = w1 * d_hfc + w2 * d_hfc_slow + w3 * d_loud
-        self.novelty.extend(novelty.tolist())
-        self.nov_hist.update(novelty.tolist())
+                scale = mad_scale(hfc_hist[-min(len(hfc_hist), int(5.0/hop_sec)):])
+                h_jump = abs(h_post - h_pre) / max(scale, 1e-6)
+                l_jump = abs(l_post - l_pre)
 
-        # Online peak picking with spacing and confirmation
-        events = []
-        thresh = self.nov_hist.percentile(p.threshold_percentile)
+                if (h_jump >= HFC_JUMP_K) or (l_jump >= LOUD_JUMP_DB):
+                    print(f'[BOUNDARY] t={t_audio:.3f}s  novelty={novelty:.4f}  thr={thr:.4f}  h_jump={h_jump:.2f}  l_jump={l_jump:.2f}')
+                    last_emit_time = t_audio
 
-        for i in range(n):
-            t = times[i]
-            if t < self.cooldown_until:
-                continue
+        # Sleep to simulate real-time wall-clock
+        t_elapsed = time.perf_counter() - t_start
+        t_should = t_audio
+        delay = t_should - t_elapsed
+        if delay > 0:
+            time.sleep(min(delay, 0.1))
 
-            # local maximum in a small causal window (compare to previous sample only to stay causal)
-            is_peak = novelty[i] > thresh
-            if is_peak:
-                # Stage 1: mark candidate
-                if self.pending_candidate is None:
-                    self.pending_candidate = t
-
-            # Stage 2: confirm using post window once enough time passed
-            if self.pending_candidate is not None:
-                cand_t = self.pending_candidate
-                if t - cand_t >= p.post_win_sec:
-                    # Compute pre/post means over windows
-                    pre_mask = (np.array(self.time) >= cand_t - p.pre_win_sec) & (np.array(self.time) < cand_t)
-                    post_mask = (np.array(self.time) >= cand_t) & (np.array(self.time) < cand_t + p.post_win_sec)
-
-                    h_pre = np.mean(np.array(self.hfc_s)[pre_mask]) if np.any(pre_mask) else med
-                    h_post = np.mean(np.array(self.hfc_s)[post_mask]) if np.any(post_mask) else h_pre
-                    l_pre = np.mean(np.array(self.loud_s)[pre_mask]) if np.any(pre_mask) else -60.0
-                    l_post = np.mean(np.array(self.loud_s)[post_mask]) if np.any(post_mask) else l_pre
-
-                    h_jump = abs(h_post - h_pre) / mad
-                    l_jump = abs(l_post - l_pre)
-
-                    if (h_jump >= p.hfc_jump_k) or (l_jump >= p.loud_jump_db):
-                        events.append({'time': cand_t, 'h_jump_mad': float(h_jump), 'l_jump_db': float(l_jump)})
-                        self.cooldown_until = cand_t + p.min_spacing_sec
-
-                    self.pending_candidate = None  # reset whether accepted or not
-
-        return events
-
-# --------------- Offline chunked runner ---------------
-
-def stream_from_file(filename, chunk_seconds=1.0, params=Params()):
-    # Load whole file mono at target sample rate (Essentia decodes native rate by default)
-    audio = es.MonoLoader(filename=filename)()
-    sr = es.MonoLoader(filename=filename).paramValue('sampleRate')
-    params.sample_rate = sr
-
-    # Chunk the raw samples
-    N = len(audio)
-    chunk_len = int(chunk_seconds * sr)
-    for start in range(0, N, chunk_len):
-        yield audio[start:start+chunk_len]
-
-# --------------- Demo main ---------------
+    print('Done.')
 
 if __name__ == '__main__':
-    params = Params()
-    detector = OnlineBoundaryDetector(params)
+    try:
+        mp3_path = input('Enter MP3 file path: ').strip()
+    except EOFError:
+        print('No input provided.')
+        sys.exit(1)
+    simulate_realtime_mp3(mp3_path)
 
-    audio_file = 'scom.mp3'  # change this path
-    events_all = []
-    for chunk in stream_from_file(audio_file, chunk_seconds=0.5, params=params):
-        ev = detector.process_chunk(chunk)
-        if ev:
-            events_all.extend(ev)
+# --- Add this to expose a reusable onset detection class ---
+class RealtimeOnsetDetector:
+    def __init__(self, sample_rate=44100):
+        self.hop_sec = HOP_SIZE / sample_rate
+        self.ema_fast = CausalEMA(self.hop_sec, 0.25)
+        self.ema_slow = CausalEMA(self.hop_sec, 1.0)
+        self.ema_loud = CausalEMA(self.hop_sec, 0.25)
+        self.ema_nov = CausalEMA(self.hop_sec, 0.25)
+        self.novelty_buf = []
+        self.hfc_hist = []
+        self.loud_hist = []
+        self.preN = max(1, int(PRE_WIN_SEC / self.hop_sec))
+        self.postN = max(1, int(POST_WIN_SEC / self.hop_sec))
+        self.min_spacing = MIN_SPACING_SEC
+        self.last_emit_time = -1e9
+        self.last_audio_time = 0.0
 
-    # Print detected boundaries at the end (or push to your MQTT in real time)
-    for e in events_all:
-        print(f"{e['time']:.3f}")
+    def is_onset(self, frame, curr_time):
+        hfc_raw = compute_hfc_val(frame)
+        loud_db = frame_loudness_db(frame)
+        hfc_f = self.ema_fast.push(hfc_raw)
+        hfc_s = self.ema_slow.push(hfc_raw)
+        loud_s = self.ema_loud.push(loud_db)
+        self.hfc_hist.append(hfc_f)
+        self.loud_hist.append(loud_s)
+        d_hfc_fast = abs(self.hfc_hist[-1] - self.hfc_hist[-2]) if len(self.hfc_hist) >= 2 else 0.0
+        d_hfc_slow = abs(hfc_s - (self.hfc_hist[-2] if len(self.hfc_hist) >= 2 else hfc_s)) if len(self.hfc_hist) >= 2 else 0.0
+        d_loud = abs(self.loud_hist[-1] - self.loud_hist[-2]) if len(self.loud_hist) >= 2 else 0.0
+        w1, w2, w3 = W_WEIGHTS
+        novelty_raw = w1 * d_hfc_fast + w2 * d_hfc_slow + w3 * d_loud
+        novelty = self.ema_nov.push(novelty_raw)
+        self.novelty_buf.append(novelty)
+        if len(self.novelty_buf) > max(1, int(PERC_WINDOW_SEC / self.hop_sec)):
+            self.novelty_buf.pop(0)
+        thr = rolling_percentile(self.novelty_buf, PERCENTILE)
+        over_thr = novelty > thr
+        spacing_ok = (curr_time - self.last_emit_time) >= self.min_spacing
+        # post-confirmation logic simplified for pipeline speed
+        if over_thr and spacing_ok and len(self.hfc_hist) >= (self.preN + self.postN + 2):
+            scale = mad_scale(self.hfc_hist[-min(len(self.hfc_hist), int(5.0 / self.hop_sec)):])
+            h_pre = float(np.mean(self.hfc_hist[-self.preN:])) if self.preN > 0 else 0.0
+            h_post = float(np.mean(self.hfc_hist[-self.postN:])) if self.postN > 0 else 0.0
+            l_pre = float(np.mean(self.loud_hist[-self.preN:])) if self.preN > 0 else 0.0
+            l_post = float(np.mean(self.loud_hist[-self.postN:])) if self.postN > 0 else 0.0
+            h_jump = abs(h_post - h_pre) / max(scale, 1e-6)
+            l_jump = abs(l_post - l_pre)
+            if (h_jump >= HFC_JUMP_K) or (l_jump >= LOUD_JUMP_DB):
+                self.last_emit_time = curr_time
+                return True, loud_db
+        return False, loud_db
+
+
+# --- Add this to expose a reusable onset detection class ---
+class RealtimeOnsetDetector:
+    def __init__(self, sample_rate=44100):
+        self.hop_sec = HOP_SIZE / sample_rate
+        self.ema_fast = CausalEMA(self.hop_sec, 0.25)
+        self.ema_slow = CausalEMA(self.hop_sec, 1.0)
+        self.ema_loud = CausalEMA(self.hop_sec, 0.25)
+        self.ema_nov = CausalEMA(self.hop_sec, 0.25)
+        self.novelty_buf = []
+        self.hfc_hist = []
+        self.loud_hist = []
+        self.preN = max(1, int(PRE_WIN_SEC / self.hop_sec))
+        self.postN = max(1, int(POST_WIN_SEC / self.hop_sec))
+        self.min_spacing = MIN_SPACING_SEC
+        self.last_emit_time = -1e9
+        self.last_audio_time = 0.0
