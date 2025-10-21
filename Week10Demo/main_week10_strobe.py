@@ -17,7 +17,7 @@ from audio_analyzer import process_audio_features
 from color_mapper import get_available_genres, genre_color_palettes, map_features_to_genre_color
 
 # --- Onset Detector Import ---
-from ONSET.realtime_OD import RealtimeOnsetDetector
+from HFC_Realtime import RealtimeOnsetDetector
 
 try:
     from pyserial import SimpleDMX
