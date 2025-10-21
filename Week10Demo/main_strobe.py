@@ -1,6 +1,6 @@
 """
 Realtime MP3 → Feature Analysis + DMX output.
-FINAL VERSION: Includes Real-Time Synchronization, Loudness-Based Color Mapping, and Strobe Effect.
+FINAL VERSION: Includes Real-Time Synchronization, Loudness-Based Color Mapping, and White Strobe for Loudness > 80dB.
 """
 
 import os
@@ -71,7 +71,7 @@ def _suggest_default_port() -> str:
         return os.environ.get("DAZZLER_DMX_PORT", "COM3") 
     if sysname == "darwin":
         return os.environ.get("DAZZLER_DMX_PORT", "/dev/tty.usbserial") 
-    return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB2") 
+    return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB1") 
 
 
 class _NoopDMX:
@@ -81,7 +81,7 @@ class _NoopDMX:
     def update_lighting(self, rgbw_tuple, hue_speed):
         print(f"[DMX] (noop) R{rgbw_tuple[0]} G{rgbw_tuple[1]} B{rgbw_tuple[2]} W{rgbw_tuple[3]} speed={hue_speed:.2f}")
 
-def init_dmx_controller(port: str | None = None, num_channels: int = 18):
+def init_dmx_controller(port: str | None = None, num_channels: int = 9):
     if SimpleDMX is None:
         return _NoopDMX()
     port = port or _suggest_default_port()
@@ -144,7 +144,9 @@ def stream_mp3_realtime(
     analysis_buffer = np.empty(0, dtype=np.float32)
     results = []
     
-    start_time = time.time()
+    start_time = time.time() # Capture the exact moment the stream begins
+    strobe_toggle = False   # Non-blocking strobe toggle
+
     print(f"[RUN] Streaming {Path(mp3_path).name} ({genre.title()}) - chunk={chunk_seconds}s, hop={hop_ratio}")
 
     try:
@@ -153,63 +155,44 @@ def stream_mp3_realtime(
             if not raw or len(raw) < frame_bytes:
                 break
             
-            time.sleep(0.001)
-
+            time.sleep(0.001) 
             block = np.frombuffer(raw, dtype=np.float32)
             analysis_buffer = np.concatenate((analysis_buffer, block))
 
             while analysis_buffer.size >= chunk_samples:
+                
                 time_position = (len(results) * hop_samples) / sample_rate
                 actual_elapsed_time = time.time() - start_time
                 sleep_needed = time_position - actual_elapsed_time
                 if sleep_needed > 0.005:
                     time.sleep(sleep_needed)
-                
+
                 window = analysis_buffer[:chunk_samples]
-                
+
                 mode, key = detect_mode_key(window, sample_rate)
                 tempo = detect_tempo(window, sample_rate)
                 loudness = detect_loudness(window, sample_rate)
-
                 feature_output, hue_speed = process_audio_features(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
-                
-                mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
-                r, g, b = mapped_rgb
-                
-                # --- DMX Output for 2 Lights ---
-                rgbw1 = (int(r), int(g), int(b), 0)
-                rgbw2 = (int(r), int(g), int(b), 0)
-                
-                # Apply strobe if loudness > 80 dB
+
                 if loudness > 80:
-                    for _ in range(3):  # strobe 3 times quickly
-                        # On
-                        full_dmx = list(rgbw1) + [0]*(9-4) + list(rgbw2) + [0]*(9-4)
-                        dmx.update_lighting(full_dmx, hue_speed)
-                        time.sleep(0.05)
-                        # Off
-                        full_dmx_off = [0]*18
-                        dmx.update_lighting(full_dmx_off, hue_speed)
-                        time.sleep(0.05)
+                    # Non-blocking white strobe
+                    strobe_toggle = not strobe_toggle
+                    rgbw = (255, 255, 255, 0) if strobe_toggle else (0, 0, 0, 0)
+                    dmx.update_lighting(rgbw, hue_speed)
                 else:
-                    full_dmx = list(rgbw1) + [0]*(9-4) + list(rgbw2) + [0]*(9-4)
-                    dmx.update_lighting(full_dmx, hue_speed)
-                
-                print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Feature:{str(feature_output):12s} -> RGB{rgbw1[:3]}")
+                    mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
+                    r, g, b = mapped_rgb
+                    rgbw = (int(r), int(g), int(b), 0)
+                    dmx.update_lighting(rgbw, hue_speed)
+
+                print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Feature:{str(feature_output):12s} -> RGB{rgbw[:3]}")
 
                 results.append({
                     "time_position": time_position,
-                    "features": {
-                        "mode": mode, "key": key, "tempo": float(tempo), "loudness": float(loudness)
-                    },
-                    "lighting": {
-                        "feature_output": str(feature_output),
-                        "mapped_rgbw_light1": rgbw1,
-                        "mapped_rgbw_light2": rgbw2,
-                        "hue_speed": float(hue_speed)
-                    }
+                    "features": {"mode": mode, "key": key, "tempo": float(tempo), "loudness": float(loudness)},
+                    "lighting": {"feature_output": str(feature_output), "mapped_rgbw": rgbw, "hue_speed": float(hue_speed)}
                 })
 
                 analysis_buffer = analysis_buffer[hop_samples:]
@@ -237,6 +220,8 @@ def stream_mp3_realtime(
         print(f"[ERR] Runtime Exception: {e}")
         proc.kill()
         traceback.print_exc()
+    finally:
+        pass
 
 
 if __name__ == "__main__":
@@ -250,7 +235,7 @@ if __name__ == "__main__":
     print(f"Update Rate: {0.25} seconds (Responsive)")
     print("-----------------------------\n")
 
-    dmx = init_dmx_controller(port=dmx_port, num_channels=18) 
+    dmx = init_dmx_controller(port=dmx_port, num_channels=9) 
     
     try:
         input("Press Enter to start the music and lighting show...")
