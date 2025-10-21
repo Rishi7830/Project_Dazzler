@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from PIL import Image, ImageTk, ImageDraw
 import random
+import os
 
 # Helper Classes
 class ToolTip:
@@ -16,8 +17,9 @@ class ToolTip:
     def show_tooltip(self, event=None):
         if self.tooltip_window or not self.text:
             return
+        # Adjusted placement slightly to avoid covering the cursor
         x = self.widget.winfo_rootx() + 20
-        y = self.widget.winfo_rooty() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
         self.tooltip_window = tw = tk.Toplevel(self.widget)
         tw.wm_overrideredirect(True)
         tw.wm_geometry(f"+{x}+{y}")
@@ -63,19 +65,27 @@ class DazzlerDashboard:
     # UI Setup
     def load_background(self):
         """Load and place background with translucent overlay."""
-        image_path = r"C:\Users\Rishi Moorthy\Desktop\dazzler\image.jpg" #change directory to image
+        image_path = r"C:\Users\Rishi Moorthy\Desktop\dazzler\image.jpg"
+        
+        self.label_bg_color = "#E5E5E5" 
+        
         try:
             pil_image = Image.open(image_path).resize((800, 600)).convert("RGBA")
             overlay = pil_image.copy()
             draw = ImageDraw.Draw(overlay, "RGBA")
-            draw.rectangle([180, 330, 620, 520], fill=(255, 255, 255, 160))
+            
+            
             blended = Image.alpha_composite(pil_image, overlay)
             background_image = ImageTk.PhotoImage(blended)
             self.background_label = tk.Label(self.root, image=background_image)
             self.background_label.image = background_image
             self.background_label.place(x=0, y=0, relwidth=1, relheight=1)
         except Exception as e:
-            print(f"Error loading image: {e}")
+
+            self.background_label = tk.Label(self.root, bg="#DDDDDD")
+            self.background_label.place(x=0, y=0, relwidth=1, relheight=1)
+            self.label_bg_color = "#DDDDDD" 
+            print(f"Error loading image. Using solid background: {e}")
 
     def create_menu(self):
         """Menu bar with basic options."""
@@ -92,7 +102,7 @@ class DazzlerDashboard:
         menubar.add_cascade(label="Help", menu=help_menu)
 
     def create_ui_box(self):
-        """Main interactive UI box with labels, dropdown, and button."""
+        """Main interactive UI box with labels, dropdowns, and buttons."""
         genres = [
             "Blues", "Classical", "Country", "Electronica and Dance",
             "Folk", "Gospel", "Hip-Hop and Rap", "Indie", "Jazz",
@@ -102,54 +112,82 @@ class DazzlerDashboard:
         # Styles
         style = ttk.Style()
         style.theme_use("clam")
+        
+        # Style for Combobox (Genre)
         style.configure("TCombobox", fieldbackground="white", background="lightgray",
-                        foreground="black", arrowcolor="black", font=("Helvetica", 12))
-        style.configure("Cool.TButton", font=("Helvetica", 12, "bold"),
-                        foreground="white", background="#4A90E2", padding=6)
-        style.map("Cool.TButton", background=[("active", "#357ABD")])
+                         foreground="black", arrowcolor="black", font=("Helvetica", 12))
+        
+        # Style for Entry (COM Port, Song Name)
+        style.configure("TEntry", fieldbackground="white", foreground="black",
+                        insertcolor="black", font=("Helvetica", 12))
+        
+        # Style for the master submit button
+        style.configure("Master.TButton", font=("Helvetica", 12, "bold"),
+                         foreground="white", background="#4CAF50", padding=8) 
+        style.map("Master.TButton", background=[("active", "#388E3C")]) 
 
-        # Title
-        shadow = tk.Label(self.root, text="Dazzler Dashboard",
-                          font=("Helvetica", 20, "bold"), fg="black", bg="white")
-        shadow.place(relx=0.502, rely=0.48, anchor=tk.CENTER)
-
-        self.title_label = tk.Label(self.root, text="Dazzler Dashboard",
-                                    font=("Helvetica", 20, "bold"),
-                                    fg="#4A90E2", bg="white")
-        self.title_label.place(relx=0.5, rely=0.475, anchor=tk.CENTER)
-
-        # Instruction
-        instruction = tk.Label(self.root, text="Select your favorite music genre:",
-                               font=("Helvetica", 14, "bold"),
-                               bg="white", fg="black")
-        instruction.place(relx=0.5, rely=0.63, anchor=tk.CENTER)
-
-        # Dropdown
+        # Input Fields
+        start_y = 0.35 
+        y_step = 0.08
+        
+        # Genre Input (Dropdownn)
+        tk.Label(self.root, text="Select Music Genre:",
+                 font=("Helvetica", 12, "bold"), bg=self.label_bg_color, fg="black").place(relx=0.5, rely=start_y, anchor=tk.CENTER)
+        
         self.genre_var = tk.StringVar()
         self.genre_dropdown = ttk.Combobox(self.root, textvariable=self.genre_var,
                                            values=genres, font=("Helvetica", 12),
-                                           state="readonly", width=28)
-        self.genre_dropdown.place(relx=0.5, rely=0.70, anchor=tk.CENTER)
-
+                                           state="readonly", width=30)
+        self.genre_dropdown.place(relx=0.5, rely=start_y + y_step, anchor=tk.CENTER)
         ToolTip(self.genre_dropdown, "Pick a music genre from the list!")
+        
+        # COM Port Input
+        com_port_y = start_y + 2 * y_step
+        
+        tk.Label(self.root, text="Enter COM Port (e.g., COM3):",
+                 font=("Helvetica", 12, "bold"), bg=self.label_bg_color, fg="black").place(relx=0.5, rely=com_port_y, anchor=tk.CENTER)
+        
+        self.com_port_var = tk.StringVar(value="COM3") 
+        self.com_port_entry = ttk.Entry(self.root, textvariable=self.com_port_var,
+                                        style="TEntry", width=32)
+        self.com_port_entry.place(relx=0.5, rely=com_port_y + y_step, anchor=tk.CENTER)
+        ToolTip(self.com_port_entry, "Specify the COM port for the lighting controller.")
 
-        # Button
-        self.button = ttk.Button(self.root, text="Submit 🎶",
-                                 command=self.display_genre,
-                                 style="Cool.TButton")
-        self.button.place(relx=0.5, rely=0.77, anchor=tk.CENTER)
-        ToolTip(self.button, "Click to confirm your choice")
+        # Song Name Input
+        song_name_y = start_y + 4 * y_step
+        
+        tk.Label(self.root, text="Enter Song Name/Path:",
+                 font=("Helvetica", 12, "bold"), bg=self.label_bg_color, fg="black").place(relx=0.5, rely=song_name_y, anchor=tk.CENTER)
+        
+        self.song_name_var = tk.StringVar(value="My_Amazing_Track.mp3") 
+        self.song_name_entry = ttk.Entry(self.root, textvariable=self.song_name_var,
+                                         style="TEntry", width=32)
+        self.song_name_entry.place(relx=0.5, rely=song_name_y + y_step, anchor=tk.CENTER)
+        ToolTip(self.song_name_entry, "Type the name or path of the song file.")
 
+        # Master Submit Button (Green)
+        submit_y = start_y + 6 * y_step - 0.01 
+        
+        self.master_button = ttk.Button(self.root, text="Start Dazzling!",
+                                         command=self.master_submit,
+                                         style="Master.TButton")
+        self.master_button.place(relx=0.5, rely=submit_y, anchor=tk.CENTER)
+        ToolTip(self.master_button, "Click to submit all data and start automation.")
+
+        # Output/Fact Labels
+        output_y = submit_y + 0.06 
+        fact_y = output_y + 0.05   
+        
         # Output label
-        self.output_label = tk.Label(self.root, text="", font=("Helvetica", 14, "italic"),
-                                     fg="darkblue", bg="white")
-        self.output_label.place(relx=0.5, rely=0.85, anchor=tk.CENTER)
+        self.output_label = tk.Label(self.root, text="", font=("Helvetica", 12, "italic"),
+                                     fg="darkblue", bg=self.label_bg_color)
+        self.output_label.place(relx=0.5, rely=output_y, anchor=tk.CENTER)
 
         # Fun fact label
-        self.fact_label = tk.Label(self.root, text="", font=("Helvetica", 11),
-                                   fg="darkgreen", bg="white", wraplength=600,
+        self.fact_label = tk.Label(self.root, text="", font=("Helvetica", 10),
+                                   fg="darkgreen", bg=self.label_bg_color, wraplength=600,
                                    justify="center")
-        self.fact_label.place(relx=0.5, rely=0.92, anchor=tk.CENTER)
+        self.fact_label.place(relx=0.5, rely=fact_y, anchor=tk.CENTER)
 
     def create_status_bar(self):
         """Status bar at the bottom."""
@@ -160,25 +198,33 @@ class DazzlerDashboard:
         status.pack(side="bottom", fill="x")
 
     # Functionalities
-    def display_genre(self):
-        """Show selected genre and random fact."""
+    def master_submit(self):
+        """Collects all inputs and simulates the start of the automation process."""
         genre = self.genre_var.get()
-        if genre:
-            self.output_label.config(text=f"🎵 You selected: {genre}")
-            fact = random.choice(self.music_facts)
-            self.fact_label.config(text=f"Fun Fact: {fact}")
-            self.status_var.set(f"Genre '{genre}' selected successfully!")
-        else:
-            self.output_label.config(text="")
-            self.fact_label.config(text="")
-            self.status_var.set("No genre selected.")
+        com_port = self.com_port_var.get()
+        song_name = self.song_name_var.get()
+        
+        if not all([genre, com_port, song_name]):
+            messagebox.showwarning("Incomplete Data", "Please ensure a **Genre**, **COM Port**, and **Song Name** are all entered.")
+            self.status_var.set("Submission failed: Missing input.")
+            return
+
+        # Display all collected data
+        self.output_label.config(text=f"Selected: Genre='{genre}' | Port='{com_port}' | Song='{song_name}'")
+
+        # Show a random fun fact
+        fact = random.choice(self.music_facts)
+        self.fact_label.config(text=f"Fun Fact: {fact}")
+        
+        # Update status bar
+        self.status_var.set(f"All data submitted. Starting automation for '{song_name}' on {com_port} with {genre} profile.")
 
     def show_message(self, msg):
         messagebox.showinfo("Info", msg)
 
     def show_about(self):
         messagebox.showinfo("About",
-                            "Dazzler Dashboard\n\n Automate Stage Lighting.")
+                            "Dazzler Dashboard\n\nAutomate Stage Lighting.")
 
 
 # Run App
