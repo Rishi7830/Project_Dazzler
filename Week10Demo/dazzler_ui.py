@@ -65,7 +65,8 @@ class DazzlerDashboard:
     # UI Setup
     def load_background(self):
         """Load and place background with translucent overlay."""
-        image_path = r"C:\Users\Rishi Moorthy\Desktop\dazzler\image.jpg"
+        image_name = "background.jpg"
+        image_path = os.path.join(os.getcwd(), image_name)
         
         self.label_bg_color = "#E5E5E5" 
         
