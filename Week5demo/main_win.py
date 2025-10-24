@@ -14,7 +14,7 @@ from tempo_detection import detect_tempo
 from loudness_detection import detect_loudness
 from mode_key_detection import detect_mode_key
 from audio_analyzer import process_audio_features
-from color_mapper import map_to_colors
+from color_mapper_old import map_to_colors
 
 try:
     from pyserial import SimpleDMX
@@ -26,10 +26,10 @@ except Exception as e:
 def _suggest_default_port() -> str:
     sysname = platform.system().lower()
     if sysname.startswith("win"):
-        return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB2")
+        return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB0")
     if sysname == "darwin":
-        return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB2") #/dev/tty.usbserial
-    return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB2")
+        return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB0") #/dev/tty.usbserial
+    return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB0")
 
 
 class _NoopDMX:
@@ -178,8 +178,8 @@ def stream_mp3_realtime(
 
 
 if __name__ == "__main__":
-    mp3_file = Path(__file__).with_name("Love Will Keep Us Alive (1999 Remaster).mp3")
-    dmx = init_dmx_controller(port="/dev/ttyUSB2", num_channels=9) #changed from None to the USB2
+    mp3_file = Path(__file__).with_name("Love Will Keep Us Alive (1999 Remaster).mp3") #chnaged song name
+    dmx = init_dmx_controller(port="/dev/ttyUSB0", num_channels=9) #changed from None to the USB0
     stream_mp3_realtime(
         mp3_path=str(mp3_file),
         dmx=dmx,

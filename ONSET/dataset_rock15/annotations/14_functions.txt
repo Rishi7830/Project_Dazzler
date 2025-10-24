@@ -1,0 +1,16 @@
+0.0	Silence
+0.020408	no_function
+3.018594	Intro
+15.505125	Verse
+40.495601	Verse
+65.529615	Chorus
+90.522993	Verse
+115.545397	Verse
+140.524263	Chorus
+165.02712	Bridge
+177.156644	no_function
+189.657687	Chorus
+214.680091	Chorus
+239.677075	Outro
+248.24585	End
+248.24585	Silence

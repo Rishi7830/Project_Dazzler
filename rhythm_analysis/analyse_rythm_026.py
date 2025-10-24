@@ -17,7 +17,7 @@ import librosa
 import essentia.standard as es
 
 # ---------------- USER CONFIG ----------------
-SONGS_DIR = Path("songs")          # folder containing your mp3/wav files
+SONGS_DIR = Path("C:/KAVERI/NUS/CDE3301 Dazzler/test_data/mp3")          # folder containing your mp3/wav files
 OUTPUT_EXCEL = "all_songs_rhythm_realtime.xlsx"
 
 # choose two window/hop timings (seconds)

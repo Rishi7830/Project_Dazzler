@@ -1,0 +1,13 @@
+0.0	Silence
+0.441179	Intro
+7.488776	Verse
+21.03483	Verse
+38.17059	Verse
+51.882744	Verse
+69.004059	Chorus
+83.483832	Verse
+100.410136	Chorus
+115.041769	Verse
+135.355147	Fade-out
+143.219161	Silence
+148.314921	End

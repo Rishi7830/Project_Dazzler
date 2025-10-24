@@ -1,0 +1,14 @@
+0.0	Silence
+0.395283	Intro
+23.329546	Intro
+47.426531	Verse
+71.635964	Chorus
+83.699955	Bridge
+95.83839	Verse
+107.91068	Interlude
+119.952313	Bridge
+132.055533	Verse
+144.141519	Fade-out
+144.141519	Outro
+159.339002	Silence
+162.17839	End

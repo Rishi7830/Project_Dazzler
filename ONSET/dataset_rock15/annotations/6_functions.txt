@@ -1,0 +1,10 @@
+0.0	Silence
+0.199252	Intro
+13.501905	Verse
+38.614308	Chorus
+63.621837	Verse
+88.554308	Chorus
+113.373016	Solo
+137.900227	Chorus
+168.23941	Silence
+170.596916	End
