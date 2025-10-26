@@ -175,7 +175,7 @@ def stream_mp3_realtime(
     # --- DYNAMIC LOUDNESS VARIABLES FOR STROBE ---
     previous_loudness = 0.0 
     # TUNE HERE: Increased the jump threshold to reduce strobe frequency
-    LOUDNESS_JUMP_THRESHOLD = 60.0 # Must jump 10.0 dB from previous chunk to strobe
+    LOUDNESS_JUMP_THRESHOLD = 34.0 # Must jump 10.0 dB from previous chunk to strobe
     # ---------------------------------------------
 
     # --- STATIC PURPLE FIXTURE 2 (SLAVE) SETTINGS (Channels 10-18) ---
