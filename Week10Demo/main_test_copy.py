@@ -26,6 +26,10 @@ from tempo_detection import detect_tempo
 from loudness_detection import detect_loudness
 from mode_key_detection import detect_mode_key
 from audio_analyzer import process_audio_features
+# Import your custom feature modules
+from Harmony_Detection import extract_harmony
+from Rhythm_Detection import extract_rhythm
+from knn_prediction import preprocess_features, predict_mood # Import mood prediction
 
 # Import all necessary functions from color_mapper, including the new mapping function
 from color_mapper import get_available_genres, genre_color_palettes, map_features_to_genre_color
