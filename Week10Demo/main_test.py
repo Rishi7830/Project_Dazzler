@@ -32,14 +32,17 @@ from color_mapper import get_available_genres, genre_color_palettes, map_feature
 
 # Correct import for your provided SimpleDMX class (assuming it's in a file named pyserial_new.py)
 try:
-    from pyserial_new import SimpleDMX, CH_DIMMER_1, CH_RED_1, CH_GREEN_1, CH_BLUE_1, CH_WHITE_1, CH_STROBE_1, CH_SOUND_1, CH_DIMMER_2, CH_RED_2, CH_GREEN_2, CH_BLUE_2, CH_WHITE_2, CH_STROBE_2, CH_SOUND_2, VAL_LED_START
+    from pyserial_new import (
+        SimpleDMX, 
+        CH_DIMMER_1, CH_RED_1, CH_GREEN_1, CH_BLUE_1, CH_WHITE_1, CH_STROBE_1, CH_SOUND_1, 
+        CH_DIMMER_2, CH_RED_2, CH_GREEN_2, CH_BLUE_2, CH_WHITE_2, CH_STROBE_2, CH_SOUND_2, 
+        VAL_LED_START, VAL_STROBE_FAST, VAL_FADE_FAST, VAL_LIGHTNING, VAL_LED_OFF # <-- ADDED MISSING CONSTANTS
+    )
 except Exception as e:
-    print(f"[WARN] Could not import SimpleDMX: {e}")
+    print(f"[WARN] Could not import SimpleDMX or constants: {e}")
     SimpleDMX = None
 
 # UI INTEGRATION AND SETUP FUNCTIONS (NO CHANGES)
-# ... (get_user_inputs_from_ui, _suggest_default_port, _NoopDMX are unchanged)
-
 def get_user_inputs_from_ui():
     """Launches the UI and waits for user input via the Start Dazzling! button."""
     root = tk.Tk()
@@ -230,7 +233,8 @@ def stream_mp3_realtime(
                     # Non-blocking white strobe
                     strobe_toggle = not strobe_toggle
                     r, g, b, w = (255, 255, 255, 0) if strobe_toggle else (0, 0, 0, 0)
-                    strobe_channel_value = dmx.VAL_STROBE_FAST # Set DMX CH3 to strobe mode
+                    # FIX APPLIED HERE: Use the module-level constant directly
+                    strobe_channel_value = VAL_STROBE_FAST # Set DMX CH3 to strobe mode
                     log_strobe = True
                 else:
                     # Normal color mapping
