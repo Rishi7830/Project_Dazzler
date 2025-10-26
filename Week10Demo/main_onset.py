@@ -12,6 +12,7 @@ import numpy as np
 import traceback
 from pathlib import Path
 import tkinter as tk 
+from audio_playback import play_audio
 
 # Import the UI class from your separate file
 from dazzler_ui import DazzlerDashboard 
@@ -155,7 +156,8 @@ def stream_mp3_realtime(
         dmx.update_lighting(color, hue_speed=0)
         print(f"Countdown: {4 - i}")
         time.sleep(1)
-
+        
+    play_audio(mp3_path)
     bytes_per_sample = 4
     frame_bytes = audio_block * channels * bytes_per_sample
     chunk_samples = int(chunk_seconds * sample_rate)
