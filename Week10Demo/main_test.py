@@ -15,7 +15,8 @@ import numpy as np
 import traceback
 from pathlib import Path
 import tkinter as tk 
-from audio_playback import play_audio
+# NOTE: The 'audio_playback' module and 'dazzler_ui' module are assumed to exist.
+from audio_playback import play_audio 
 
 # Import the UI class from your separate file
 from dazzler_ui import DazzlerDashboard 
@@ -29,13 +30,16 @@ from audio_analyzer import process_audio_features
 # Import all necessary functions from color_mapper, including the new mapping function
 from color_mapper import get_available_genres, genre_color_palettes, map_features_to_genre_color
 
+# Correct import for your provided SimpleDMX class (assuming it's in a file named pyserial_new.py)
 try:
-    from pyserial_new import SimpleDMX
+    from pyserial_new import SimpleDMX, CH_DIMMER_1, CH_RED_1, CH_GREEN_1, CH_BLUE_1, CH_WHITE_1, CH_STROBE_1, CH_SOUND_1, CH_DIMMER_2, CH_RED_2, CH_GREEN_2, CH_BLUE_2, CH_WHITE_2, CH_STROBE_2, CH_SOUND_2, VAL_LED_START
 except Exception as e:
     print(f"[WARN] Could not import SimpleDMX: {e}")
     SimpleDMX = None
 
 # UI INTEGRATION AND SETUP FUNCTIONS (NO CHANGES)
+# ... (get_user_inputs_from_ui, _suggest_default_port, _NoopDMX are unchanged)
+
 def get_user_inputs_from_ui():
     """Launches the UI and waits for user input via the Start Dazzling! button."""
     root = tk.Tk()
@@ -78,41 +82,33 @@ def _suggest_default_port() -> str:
         return os.environ.get("DAZZLER_DMX_PORT", "/dev/tty.usbserial")
     return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB1")
 
-
+# The _NoopDMX must be modified to mimic the main loop's channel setting
 class _NoopDMX:
+    def __init__(self):
+        self.data = [0] * 18 # Initialize internal data array
     def start_broadcast(self): print("[DMX] Broadcast disabled (no hardware)")
     def stop_broadcast(self): pass
     def close(self): pass
-    
-    # NOTE: The signature for this function is changing in the custom DMX logic below
-    # We will use a print that reflects the manual channel array instead of rgbw_tuple/hue_speed
-    def send_array(self, dmx_array):
-        # Only print the first 18 channels if the array is longer
-        print(f"[DMX] (noop) Array ({len(dmx_array)} ch): {dmx_array[:18]}")
-
-# Custom DMX class to override update_lighting with send_array for manual channel control
-class ManualDMX(SimpleDMX):
-    def update_lighting(self, dmx_array):
-        # Assuming SimpleDMX has a `send_array` method that takes a list of values 
-        # for channels 1 through N
-        self.send_array(dmx_array)
+    # Mimic the real DMX object's methods for logging
+    def set_channel_internal(self, ch: int, value: int):
+        if 1 <= ch <= 18:
+            self.data[ch - 1] = max(0, min(255, value))
+    def send_frame(self): 
+        # Log the state of the first and second fixture
+        print(f"[DMX] (noop) F1: R{self.data[CH_RED_1-1]} G{self.data[CH_GREEN_1-1]} B{self.data[CH_BLUE_1-1]} | F2: R{self.data[CH_RED_2-1]} B{self.data[CH_BLUE_2-1]}")
+    # Placeholder set_channel for the countdown
+    def set_channel(self, ch: int, value: int):
+        self.set_channel_internal(ch, value)
 
 def init_dmx_controller(port: str | None = None, num_channels: int = 18):
     if SimpleDMX is None:
         return _NoopDMX()
     port = port or _suggest_default_port()
     try:
-        # We need to wrap SimpleDMX to use our manual send_array approach
-        # For this exercise, we will assume SimpleDMX has a `send_array` or similar
-        # method that takes a list of 18 values for the channels.
-        if SimpleDMX is not None:
-             dmx = SimpleDMX(port=port)
-             dmx.start_broadcast()
-             print(f"[DMX] Started on {port} channels={num_channels}")
-             return dmx
-        else:
-             return _NoopDMX()
-
+        dmx = SimpleDMX(port=port)
+        dmx.start_broadcast()
+        print(f"[DMX] Started on {port} channels={num_channels}")
+        return dmx
     except Exception as e:
         print(f"[DMX] Could not open {port}: {e} -> using noop")
         return _NoopDMX()
@@ -133,8 +129,7 @@ def stream_mp3_realtime(
 ):
     """
     Stream-decode MP3 in real time, analyze features per window,
-    and update DMX lighting, strictly adhering to real-time.
-    Controls two 9-channel fixtures.
+    and update DMX lighting using dmx.set_channel_internal() and dmx.send_frame().
     """
     mp3_path = str(mp3_path)
     if not Path(mp3_path).exists():
@@ -152,18 +147,14 @@ def stream_mp3_realtime(
         print("[ERR] ffmpeg not found in PATH; install ffmpeg and retry")
         return
 
-    # 3-2-1 countdown (NO CHANGE)
+    # 3-2-1 countdown
     countdown_colors = [(255, 0, 0, 0), (255, 128, 0, 0), (255, 255, 0, 0)]
     for i, color in enumerate(reversed(countdown_colors), start=1):
-        # NOTE: Using placeholder update for countdown as we don't have a specific `update_lighting` for a list
-        # We'll rely on the DMX object having a simple initial setting capability
-        if not isinstance(dmx, _NoopDMX):
-            # For a real SimpleDMX object, you might need dmx.set_channel(1, 255) etc.
-            # Assuming a basic method for this temporary step:
-            dmx.set_channel(1, color[0])
-            dmx.set_channel(2, color[1])
-            dmx.set_channel(3, color[2])
-            dmx.send_update()
+        # NOTE: Using dmx.set_channel and dmx.send_frame which exist in SimpleDMX for initialization
+        dmx.set_channel(CH_RED_1, color[0])
+        dmx.set_channel(CH_GREEN_1, color[1])
+        dmx.set_channel(CH_BLUE_1, color[2])
+        dmx.send_frame() # Corrected from dmx.send_update()
         print(f"Countdown: {4 - i}")
         time.sleep(1)
         
@@ -183,25 +174,21 @@ def stream_mp3_realtime(
     LOUDNESS_JUMP_THRESHOLD = 5.0 # Must jump 5 dB from previous chunk to strobe
     # ---------------------------------------------
 
-    # --- STATIC PURPLE FIXTURE SETTINGS (Fixture 2, Channels 10-18) ---
-    # Assuming a 9-channel fixture in Mode 2 (RGBW + Control/Strobe/Dimmer/Speed)
-    # The channels are usually: 
-    # 1: Control (Dimmer), 2: R, 3: G, 4: B, 5: W, 6: Strobe, 7: Color Macro, 8: Speed/Control, 9: Reserved
-    
-    # Purple RGB (approx 128, 0, 128) - Maximize Dimmer/Control for full brightness
-    STATIC_PURPLE_CHANNELS = [
-        255,  # Ch 10 (Control/Dimmer - Max brightness)
-        128,  # Ch 11 (R)
-        0,    # Ch 12 (G)
-        128,  # Ch 13 (B)
-        0,    # Ch 14 (W)
-        0,    # Ch 15 (Strobe - Off)
-        0,    # Ch 16 (Color Macro - Off)
-        0,    # Ch 17 (Speed/Control - Off/Static)
-        0,    # Ch 18 (Reserved)
-    ]
-    # ------------------------------------------------------------------
+    # --- STATIC PURPLE FIXTURE 2 (SLAVE) SETTINGS (Channels 10-18) ---
+    # Set Fixture 2 to a static Purple color (e.g., R:128, G:0, B:128) and constant light
+    PURPLE_R, PURPLE_G, PURPLE_B, PURPLE_W = 128, 0, 128, 0
 
+    dmx.set_channel_internal(CH_RED_2, PURPLE_R)
+    dmx.set_channel_internal(CH_GREEN_2, PURPLE_G)
+    dmx.set_channel_internal(CH_BLUE_2, PURPLE_B)
+    dmx.set_channel_internal(CH_WHITE_2, PURPLE_W)
+    dmx.set_channel_internal(CH_DIMMER_2, 255)      # Full Dimmer
+    dmx.set_channel_internal(CH_STROBE_2, VAL_LED_START) # Constant Light (Off-strobe band)
+    dmx.set_channel_internal(CH_SOUND_2, 0)        # Sound Control Off
+
+    # Send the frame immediately to set the slave fixture to purple
+    dmx.send_frame()
+    
     print(f"[RUN] Streaming {Path(mp3_path).name} ({genre.title()}) - chunk={chunk_seconds}s, hop={hop_ratio}")
     print(f"[INFO] Dynamic Strobe Threshold: +{LOUDNESS_JUMP_THRESHOLD} dB increase.")
 
@@ -233,61 +220,49 @@ def stream_mp3_realtime(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
 
-                # 1. Calculate Fixture 1 (Master) Color
-                
-                # Default to dynamic color
-                mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
-                r, g, b = mapped_rgb
-                rgbw_master = (int(r), int(g), int(b), 0)
+                # 1. Calculate Fixture 1 (Master) Color/Strobe
                 
                 log_strobe = False
+                strobe_channel_value = VAL_LED_START # Default to constant light
+
                 # Check for Loudness Jump (Strobe Trigger)
                 if loudness - previous_loudness > LOUDNESS_JUMP_THRESHOLD:
-                    # Override color to white/black flash
+                    # Non-blocking white strobe
                     strobe_toggle = not strobe_toggle
-                    rgbw_master = (255, 255, 255, 0) if strobe_toggle else (0, 0, 0, 0)
+                    r, g, b, w = (255, 255, 255, 0) if strobe_toggle else (0, 0, 0, 0)
+                    strobe_channel_value = dmx.VAL_STROBE_FAST # Set DMX CH3 to strobe mode
                     log_strobe = True
-                
-                # 2. Build Fixture 1 (Master) Channel Data (Ch 1-9)
-                
-                # Assuming the master light uses a similar 9-channel mode:
-                # Ch 1: Dimmer/Control, Ch 2-5: RGBW, Ch 6: Strobe, Ch 7-9: Speed/Control/Macro
-                # Note: We use the hue_speed on the DMX object for control, not a channel value.
-                # If SimpleDMX requires speed control via a channel, this part needs adjustment.
-                
-                # We'll use Channel 1 for the intensity (dimmer) based on loudness for flair.
-                # Map loudness (e.g., 40-100dB) to dimmer (0-255)
-                dimmer_value = np.clip(np.interp(loudness, [40, 100], [50, 255]), 0, 255).astype(int)
-                
-                # Use a high value for speed channel (Ch 8) based on hue_speed. 
-                # Scaling hue_speed (0-1) to DMX channel range (0-255)
-                speed_value = np.clip(np.interp(hue_speed, [0, 1], [0, 255]), 0, 255).astype(int)
-
-                MASTER_CHANNELS = [
-                    dimmer_value,        # Ch 1 (Control/Dimmer)
-                    rgbw_master[0],      # Ch 2 (R)
-                    rgbw_master[1],      # Ch 3 (G)
-                    rgbw_master[2],      # Ch 4 (B)
-                    rgbw_master[3],      # Ch 5 (W)
-                    0,                   # Ch 6 (Strobe - keep off, as we strobe by color)
-                    0,                   # Ch 7 (Color Macro)
-                    speed_value,         # Ch 8 (Speed/Control)
-                    0,                   # Ch 9 (Reserved)
-                ]
-                
-                # 3. Combine Master and Static Slave Channels (Total 18 Channels)
-                dmx_array = MASTER_CHANNELS + STATIC_PURPLE_CHANNELS
-
-                # 4. Send Array
-                if not isinstance(dmx, _NoopDMX):
-                    # For a real SimpleDMX, this is the crucial call:
-                    dmx.send_array(dmx_array)
                 else:
-                    # Use the no-op fallback
-                    dmx.send_array(dmx_array)
+                    # Normal color mapping
+                    mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
+                    r, g, b = mapped_rgb
+                    w = 0 # Assume W is 0 for color mapping
+                
+                # Dimmer based on loudness (Master Fixture only)
+                dimmer_value = np.clip(np.interp(loudness, [40, 100], [50, 255]), 0, 255).astype(int)
 
+                # 2. Update Fixture 1 (Master) Channel Data (Ch 1-9)
+                
+                # Set RGBW color
+                dmx.set_channel_internal(CH_RED_1, int(r))
+                dmx.set_channel_internal(CH_GREEN_1, int(g))
+                dmx.set_channel_internal(CH_BLUE_1, int(b))
+                dmx.set_channel_internal(CH_WHITE_1, int(w))
+                
+                # Set Dimmer and Strobe
+                dmx.set_channel_internal(CH_DIMMER_1, dimmer_value)
+                dmx.set_channel_internal(CH_STROBE_1, strobe_channel_value)
+                
+                # DMX CH9 (Sound Control) based on hue_speed. Hue_speed is 0-1.
+                # Use a high value (e.g., 100-239) for effect if sound mode is not desired
+                speed_value = np.clip(np.interp(hue_speed, [0, 1], [0, 239]), 0, 239).astype(int)
+                dmx.set_channel_internal(CH_SOUND_1, speed_value)
 
-                # 5. Logging and Cleanup
+                # 3. Send the full DMX frame
+                dmx.send_frame() # CORRECTED: Use existing dmx.send_frame()
+
+                # 4. Logging and Cleanup
+                rgbw_master = (int(r), int(g), int(b), int(w))
                 if log_strobe:
                     print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB (+{loudness - previous_loudness:.2f}dB JUMP!) | T:{tempo:3.0f}bpm | Fixture 1 -> STROBE")
                 else:
@@ -299,7 +274,7 @@ def stream_mp3_realtime(
                 results.append({
                     "time_position": time_position,
                     "features": {"mode": mode, "key": key, "tempo": float(tempo), "loudness": float(loudness)},
-                    "lighting": {"feature_output": str(feature_output), "master_rgbw": rgbw_master, "slave_rgbw": STATIC_PURPLE_CHANNELS[1:5], "hue_speed_mapped": speed_value}
+                    "lighting": {"feature_output": str(feature_output), "master_rgbw": rgbw_master, "slave_rgbw": (PURPLE_R, PURPLE_G, PURPLE_B, PURPLE_W), "dimmer_master": dimmer_value}
                 })
 
                 analysis_buffer = analysis_buffer[hop_samples:]
@@ -307,6 +282,7 @@ def stream_mp3_realtime(
         proc.stdout.close()
         proc.wait()
 
+        # ... (JSON Saving logic is unchanged)
         if save_json and results:
             out_dir = Path(__file__).parent / "outputs"
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -359,9 +335,6 @@ if __name__ == "__main__":
                 hop_ratio=0.5,
             )
         finally:
-            if not isinstance(dmx, _NoopDMX):
-                 # Turn off lights gracefully by sending 0 to all channels (or just dimmer/RGB)
-                 dmx.send_array([0] * 18) 
-                 dmx.stop_broadcast()
-                 dmx.close()
+            # The close() method in SimpleDMX already handles stopping broadcast and clearing channels
+            dmx.close() 
             print("\n[END] DMX broadcast stopped and port closed.")
