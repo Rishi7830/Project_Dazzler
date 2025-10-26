@@ -119,7 +119,6 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 9):
 
 
 # REAL-TIME STREAMING AND ANALYSIS (WITH TIMING CORRECTION)
-
 def stream_mp3_realtime(
     mp3_path: str,
     dmx,
@@ -133,7 +132,7 @@ def stream_mp3_realtime(
 ):
     """
     Stream-decode MP3 in real time, analyze features per window,
-    and update DMX lighting, strictly adhering to real-time.
+    and update DMX lighting: Fixture1=loudness, Fixture2=mood.
     """
     mp3_path = str(mp3_path)
     if not Path(mp3_path).exists():
@@ -144,14 +143,13 @@ def stream_mp3_realtime(
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", mp3_path,
         "-f", "f32le", "-ac", str(channels), "-ar", str(sample_rate), "pipe:1",
     ]
-
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     except FileNotFoundError:
         print("[ERR] ffmpeg not found in PATH; install ffmpeg and retry")
         return
 
-    # 3-2-1 countdown
+    # Countdown
     countdown_colors = [(255, 0, 0, 0), (255, 128, 0, 0), (255, 255, 0, 0)]
     for i, color in enumerate(reversed(countdown_colors), start=1):
         dmx.update_lighting(color, hue_speed=0)
@@ -165,10 +163,13 @@ def stream_mp3_realtime(
     analysis_buffer = np.empty(0, dtype=np.float32)
     results = []
 
-    start_time = time.time() # Capture the exact moment the stream begins
-    strobe_toggle = False    # Non-blocking strobe toggle
+    start_time = time.time()
+    strobe_toggle = False
+    previous_loudness = 0.0
+    LOUDNESS_JUMP_THRESHOLD = 5.0
 
     print(f"[RUN] Streaming {Path(mp3_path).name} ({genre.title()}) - chunk={chunk_seconds}s, hop={hop_ratio}")
+    print(f"[INFO] Fixture 1: loudness-driven, Fixture 2: mood-driven")
 
     try:
         while True:
@@ -181,7 +182,6 @@ def stream_mp3_realtime(
             analysis_buffer = np.concatenate((analysis_buffer, block))
 
             while analysis_buffer.size >= chunk_samples:
-
                 time_position = (len(results) * hop_samples) / sample_rate
                 actual_elapsed_time = time.time() - start_time
                 sleep_needed = time_position - actual_elapsed_time
@@ -190,39 +190,75 @@ def stream_mp3_realtime(
 
                 window = analysis_buffer[:chunk_samples]
 
+                # Extract features
                 mode, key = detect_mode_key(window, sample_rate)
                 tempo = detect_tempo(window)
                 loudness = detect_loudness(window, sample_rate)
                 rhythm = extract_rhythm(window)
                 harmony = extract_harmony(window)
 
-                # Predict mood
-                # Note: rhythm and harmony are not extracted in this version, so we use default values
+                # Mood prediction
                 features_processed = preprocess_features(mode, tempo, loudness, rhythm, harmony)
                 mood = predict_mood(features_processed)
 
-                feature_output, hue_speed = process_audio_features(
-                    loudness=loudness, mode=mode, key=key, tempo=tempo
-                )
+                # Process features for DMX (hue_speed, etc.)
+                feature_output, hue_speed = process_audio_features(loudness=loudness, mode=mode, key=key, tempo=tempo)
 
-                if loudness > 80:
-                    # Non-blocking white strobe
+                # --- Fixture 1: Loudness-driven ---
+                log_strobe = False
+                strobe_value = 0
+                if loudness - previous_loudness > LOUDNESS_JUMP_THRESHOLD:
                     strobe_toggle = not strobe_toggle
-                    rgbw = (255, 255, 255, 0) if strobe_toggle else (0, 0, 0, 0)
-                    dmx.update_lighting(rgbw, hue_speed)
+                    strobe_value = 255  # fast strobe
+                    log_strobe = True
+                    r1, g1, b1, w1 = (255, 255, 255, 0) if strobe_toggle else (0, 0, 0, 0)
                 else:
-                    mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
-                    r, g, b = mapped_rgb
-                    rgbw = (int(r), int(g), int(b), 0)
-                    dmx.update_lighting(rgbw, hue_speed)
+                    r1, g1, b1 = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
+                    w1 = 0
+                dimmer1 = int(np.clip(np.interp(loudness, [40, 100], [50, 255]), 0, 255))
 
-                print(f"[{time_position:6.2f}s] Mood: {mood:12s} | L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Feature:{str(feature_output):12s} -> RGB{rgbw[:3]}")
+                dmx.set_channel_internal(CH_RED_1, int(r1))
+                dmx.set_channel_internal(CH_GREEN_1, int(g1))
+                dmx.set_channel_internal(CH_BLUE_1, int(b1))
+                dmx.set_channel_internal(CH_WHITE_1, int(w1))
+                dmx.set_channel_internal(CH_DIMMER_1, dimmer1)
+                dmx.set_channel_internal(CH_STROBE_1, strobe_value)
+                dmx.set_channel_internal(CH_SOUND_1, int(np.clip(hue_speed * 239, 0, 239)))
+
+                # --- Fixture 2: Mood-driven ---
+                # Map mood -> RGB (e.g., via a new color mapper function)
+                r2, g2, b2 = map_features_to_genre_color(mood=mood, loudness=loudness, tempo=tempo, genre=genre)
+                w2 = 0
+                dimmer2 = 255
+                dmx.set_channel_internal(CH_RED_2, int(r2))
+                dmx.set_channel_internal(CH_GREEN_2, int(g2))
+                dmx.set_channel_internal(CH_BLUE_2, int(b2))
+                dmx.set_channel_internal(CH_WHITE_2, int(w2))
+                dmx.set_channel_internal(CH_DIMMER_2, dimmer2)
+                dmx.set_channel_internal(CH_STROBE_2, 0)
+                dmx.set_channel_internal(CH_SOUND_2, 0)
+
+                # Send DMX frame
+                dmx.send_frame()
+
+                # Logging
+                if log_strobe:
+                    print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB (+{loudness - previous_loudness:.2f}dB) | T:{tempo:3.0f}bpm | Fixture 1 -> STROBE | Fixture 2 -> Mood:{mood}")
+                else:
+                    print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Fixture1 RGB:{r1,g1,b1} | Fixture2 Mood:{mood}")
+
+                previous_loudness = loudness
 
                 results.append({
                     "time_position": time_position,
                     "features": {"mode": mode, "key": key, "tempo": float(tempo), "loudness": float(loudness)},
                     "mood": mood,
-                    "lighting": {"feature_output": str(feature_output), "mapped_rgbw": rgbw, "hue_speed": float(hue_speed)}
+                    "lighting": {
+                        "fixture1_rgbw": (r1, g1, b1, w1),
+                        "fixture2_rgbw": (r2, g2, b2, w2),
+                        "dimmer1": dimmer1,
+                        "dimmer2": dimmer2,
+                    }
                 })
 
                 analysis_buffer = analysis_buffer[hop_samples:]
@@ -230,18 +266,13 @@ def stream_mp3_realtime(
         proc.stdout.close()
         proc.wait()
 
+        # Save JSON
         if save_json and results:
             out_dir = Path(__file__).parent / "outputs"
             out_dir.mkdir(parents=True, exist_ok=True)
             out_file = out_dir / f"lighting_data_{Path(mp3_path).stem}_{genre}_realtime.json"
-
-            def convert_to_float(obj):
-                if isinstance(obj, np.floating):
-                    return float(obj)
-                return obj
-
             with open(out_file, "w") as f:
-                json.dump(results, f, indent=2, default=convert_to_float)
+                json.dump(results, f, indent=2)
             print(f"\n[OK] Saved {len(results)} analysis windows to {out_file}")
 
     except KeyboardInterrupt:
@@ -250,8 +281,6 @@ def stream_mp3_realtime(
         print(f"[ERR] Runtime Exception: {e}")
         proc.kill()
         traceback.print_exc()
-    finally:
-        pass
 
 
 if __name__ == "__main__":
