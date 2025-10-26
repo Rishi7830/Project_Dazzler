@@ -101,7 +101,7 @@ class _NoopDMX:
     def update_lighting(self, rgbw_tuple, hue_speed):
         print(f"[DMX] (noop) R{rgbw_tuple[0]} G{rgbw_tuple[1]} B{rgbw_tuple[2]} W{rgbw_tuple[3]} speed={hue_speed:.2f}")
 
-def init_dmx_controller(port: str | None = None, num_channels: int = 9):
+def init_dmx_controller(port: str | None = None, num_channels: int = 18):
     if SimpleDMX is None:
         return _NoopDMX()
     port = port or _suggest_default_port()
@@ -258,7 +258,7 @@ if __name__ == "__main__":
         print(f"Update Rate: {0.25} seconds (Responsive)")
         print("-----------------------------\n")
 
-        dmx = init_dmx_controller(port=dmx_port, num_channels=9)
+        dmx = init_dmx_controller(port=dmx_port, num_channels=18)
         
         playback_process = None
         analysis_process = None

@@ -13,15 +13,25 @@ import threading
 # 8: Master Dimmer (0-255)
 # 9: Sound Control (0-239 none, 240-255 sound active)
 
-CH_PAN   = 1
-CH_TILT  = 2
-CH_STROBE = 3
-CH_RED   = 4
-CH_GREEN = 5
-CH_BLUE  = 6
-CH_WHITE = 7
-CH_DIMMER = 8
-CH_SOUND = 9
+CH_PAN_1   = 1
+CH_TILT_1  = 2
+CH_STROBE_1 = 3
+CH_RED_1   = 4
+CH_GREEN_1 = 5
+CH_BLUE_1  = 6
+CH_WHITE_1 = 7
+CH_DIMMER_1 = 8
+CH_SOUND_1= 9
+
+CH_PAN_2   = 10
+CH_TILT_2  = 11
+CH_STROBE_2 = 12
+CH_RED_2   = 13
+CH_GREEN_2 = 14
+CH_BLUE_2  = 15
+CH_WHITE_2 = 16
+CH_DIMMER_2 = 17
+CH_SOUND_2 = 18
 
 # Strobe channel value helpers (Channel 3)
 VAL_LED_OFF   = 0       # explicit off band start
@@ -33,8 +43,8 @@ VAL_LED_START   = 255   # constant on
 class SimpleDMX:
     def __init__(self, port: str, strobe_interval: float = 0.1):
         self.port = port
-        # Enforce exactly 9 channels for this fixture mode
-        self.num_channels = 9
+        # Two 9-channel fixtures = 18 channels total
+        self.num_channels = 18
         self.data = [0] * self.num_channels
         self.running = False
         self.strobe_on = False
@@ -52,13 +62,22 @@ class SimpleDMX:
             )
             print(f"Serial port {self.port} opened successfully.")
 
-            # Initialize to safe/active defaults for 9CH mode
-            self.set_channel_internal(CH_PAN, 0)
-            self.set_channel_internal(CH_TILT, 0)
-            self.set_channel_internal(CH_STROBE, VAL_LED_START)  # constant light
-            self.set_channel_internal(CH_DIMMER, 255)            # full output
-            self.set_channel_internal(CH_SOUND, 0)               # sound off
+            # Initialize both fixtures (fixture1 channels 1..9, fixture2 channels 10..18)
+            self.set_channel_internal(CH_PAN_1, 0)
+            self.set_channel_internal(CH_TILT_1, 0)
+            self.set_channel_internal(CH_STROBE_1, VAL_LED_START)  # constant light
+            self.set_channel_internal(CH_DIMMER_1, 255)            # full output
+            self.set_channel_internal(CH_SOUND_1, 0)               # sound off
 
+            self.set_channel_internal(CH_PAN_2, 0)
+            self.set_channel_internal(CH_TILT_2, 0)
+            self.set_channel_internal(CH_STROBE_2, VAL_LED_START)  # constant light
+            self.set_channel_internal(CH_DIMMER_2, 255)            # full output
+            self.set_channel_internal(CH_SOUND_2, 0)               # sound off
+
+            # Immediately send initial frame so hardware mirrors the default values
+            self.send_frame()
+            
         except serial.SerialException as e:
             print(f"Error: Could not open serial port {self.port}.")
             print(e)
@@ -76,18 +95,26 @@ class SimpleDMX:
 
     def clear_color_channels(self):
         if self.ser:
-            for ch in range(CH_RED, CH_WHITE + 1):
+            for ch in range(CH_RED_1, CH_WHITE_1 + 1):
                 self.set_channel_internal(ch, 0)
-            self.set_channel_internal(CH_DIMMER, 0)
-            self.set_channel_internal(CH_STROBE, VAL_LED_OFF)
+            self.set_channel_internal(CH_DIMMER_1, VAL_LED_OFF)
+
+            for ch in range(CH_RED_2, CH_WHITE_2 + 1):
+                self.set_channel_internal(ch, 0)
+            self.set_channel_internal(CH_DIMMER_2, VAL_LED_OFF)
 
     def set_channels_from_tuple(self, color_tuple):
         if self.ser and len(color_tuple) >= 4:
             r, g, b, w = color_tuple[:4]
-            self.set_channel_internal(CH_RED, r)
-            self.set_channel_internal(CH_GREEN, g)
-            self.set_channel_internal(CH_BLUE, b)
-            self.set_channel_internal(CH_WHITE, w)
+            self.set_channel_internal(CH_RED_1, r)
+            self.set_channel_internal(CH_GREEN_1, g)
+            self.set_channel_internal(CH_BLUE_1, b)
+            self.set_channel_internal(CH_WHITE_1, w)
+
+            self.set_channel_internal(CH_RED_2, r)
+            self.set_channel_internal(CH_GREEN_2, g)
+            self.set_channel_internal(CH_BLUE_2, b)
+            self.set_channel_internal(CH_WHITE_2, w)
         elif not self.ser:
             print("Serial port not available. Cannot set channels from tuple.")
 
@@ -103,15 +130,19 @@ class SimpleDMX:
 
             # Apply color and full dimmer
             self.set_channels_from_tuple(self.color_to_strobe)
-            self.set_channel_internal(CH_DIMMER, 255)
+            self.set_channel_internal(CH_DIMMER_1, 255)
+            self.set_channel_internal(CH_DIMMER_2, 255)
 
             # Use CH3 strobe band; choose fast regular strobe by default
-            self.set_channel_internal(CH_STROBE, VAL_STROBE_FAST)
+            self.set_channel_internal(CH_STROBE_1, VAL_STROBE_FAST)
+            self.set_channel_internal(CH_STROBE_2, VAL_STROBE_FAST)
         else:
             self.strobe_on = False
             self.set_channels_from_tuple(color_tuple)
-            self.set_channel_internal(CH_DIMMER, 255)
-            self.set_channel_internal(CH_STROBE, VAL_LED_START)  # constant on
+            self.set_channel_internal(CH_DIMMER_1, 255)
+            self.set_channel_internal(CH_STROBE_1, VAL_LED_START)  # constant on
+            self.set_channel_internal(CH_DIMMER_2, 255)
+            self.set_channel_internal(CH_STROBE_2, VAL_LED_START)  # constant on
 
         self.send_frame()
 
@@ -126,7 +157,7 @@ class SimpleDMX:
             time.sleep(0.001)
             self.ser.baudrate = 250000
 
-            # Start code + 9 bytes only
+            # Start code + 18 bytes only
             frame = bytes([0]) + bytes(self.data)
             self.ser.write(frame)
             self.ser.flush()
