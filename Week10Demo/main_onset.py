@@ -1,0 +1,297 @@
+"""
+Realtime MP3 → Feature Analysis + DMX output.
+Includes Real-Time Synchronization, Loudness-Based Color Mapping, and White Strobe.
+"""
+
+import os
+import time
+import platform
+import subprocess
+import json
+import numpy as np
+import traceback
+from pathlib import Path
+import tkinter as tk 
+
+# Import the UI class from your separate file
+from dazzler_ui import DazzlerDashboard 
+
+# Import your custom feature modules
+from tempo_detection import detect_tempo
+from loudness_detection import detect_loudness
+from mode_key_detection import detect_mode_key
+from audio_analyzer import process_audio_features
+
+# Import all necessary functions from color_mapper, including the new mapping function
+from color_mapper import get_available_genres, genre_color_palettes, map_features_to_genre_color
+
+# --- NEW: Import the Onset Detector ---
+from HFC_Realtime import RealtimeOnsetDetector 
+
+try:
+    from pyserial import SimpleDMX
+except Exception as e:
+    print(f"[WARN] Could not import SimpleDMX: {e}")
+    SimpleDMX = None
+
+# UI INTEGRATION AND SETUP FUNCTIONS (NO CHANGES HERE)
+
+def get_user_inputs_from_ui():
+    """Launches the UI and waits for user input via the Start Dazzling! button."""
+    root = tk.Tk()
+    
+    # Initialize the DazzlerDashboard UI
+    app = DazzlerDashboard(root)
+    
+    # Use a custom flag to signal when the Master Submit is pressed
+    app.submission_successful = False
+    
+    def master_submit_and_close():
+        """Modified submit action to get data and close the UI."""
+        app.master_submit() # Run the standard submit logic (for validation/output)
+        
+        # Check if the submission was successful (i.e., not incomplete)
+        if app.genre_var.get() and app.com_port_var.get() and app.song_name_var.get():
+            app.submission_successful = True
+            root.quit() # Stop the mainloop to allow the script to continue
+        else:
+            # If submission failed due to validation, keep the window open
+            print("Validation failed in UI. Please check inputs.")
+
+
+    app.master_button.config(command=master_submit_and_close)
+    
+    root.mainloop()
+    
+    if app.submission_successful:
+        # Retrieve the data from the UI instance variables
+        selected_genre = app.genre_var.get().lower()
+        filepath = app.song_name_var.get().strip().strip('"')
+        dmx_port = app.com_port_var.get().strip()
+        
+        # Check if the file path is valid before proceeding
+        if not os.path.exists(Path(filepath).expanduser()):
+             # This file check could also be added to the UI validation
+             print(f"[ERR] File not found: {filepath}. Please re-run and check the path.")
+             return None, None, None
+             
+        # Destroy the root window after we have the data
+        root.destroy()
+        
+        return selected_genre, filepath, dmx_port
+    else:
+        # If the user closed the window or submission failed
+        root.destroy()
+        return None, None, None
+
+
+def _suggest_default_port() -> str:
+    """Suggests a default DMX port based on the operating system."""
+    sysname = platform.system().lower()
+    if sysname.startswith("win"):
+        return os.environ.get("DAZZLER_DMX_PORT", "COM3")
+    if sysname == "darwin":
+        return os.environ.get("DAZZLER_DMX_PORT", "/dev/tty.usbserial")
+    return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB1")
+
+
+class _NoopDMX:
+    def start_broadcast(self): print("[DMX] Broadcast disabled (no hardware)")
+    def stop_broadcast(self): pass
+    def close(self): pass
+    def update_lighting(self, rgbw_tuple, hue_speed):
+        print(f"[DMX] (noop) R{rgbw_tuple[0]} G{rgbw_tuple[1]} B{rgbw_tuple[2]} W{rgbw_tuple[3]} speed={hue_speed:.2f}")
+
+def init_dmx_controller(port: str | None = None, num_channels: int = 9):
+    if SimpleDMX is None:
+        return _NoopDMX()
+    port = port or _suggest_default_port()
+    try:
+        dmx = SimpleDMX(port=port)
+        dmx.start_broadcast()
+        print(f"[DMX] Started on {port} channels={num_channels}")
+        return dmx
+    except Exception as e:
+        print(f"[DMX] Could not open {port}: {e} -> using noop")
+        return _NoopDMX()
+
+
+# REAL-TIME STREAMING AND ANALYSIS (WITH TIMING CORRECTION)
+
+def stream_mp3_realtime(
+    mp3_path: str,
+    dmx,
+    genre: str,
+    sample_rate: int = 44100,
+    channels: int = 1,
+    audio_block: int = 1024, # Frame size for ffmpeg and onset detector
+    chunk_seconds: float = 0.25,
+    hop_ratio: float = 0.5,
+    save_json: bool = True,
+):
+    """
+    Stream-decode MP3 in real time, analyze features per window,
+    and update DMX lighting, strictly adhering to real-time.
+    """
+    mp3_path = str(mp3_path)
+    if not Path(mp3_path).exists():
+        print(f"[ERR] File not found: {mp3_path}")
+        return
+
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", mp3_path,
+        "-f", "f32le", "-ac", str(channels), "-ar", str(sample_rate), "pipe:1",
+    ]
+
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    except FileNotFoundError:
+        print("[ERR] ffmpeg not found in PATH; install ffmpeg and retry")
+        return
+
+    # 3-2-1 countdown
+    countdown_colors = [(255, 0, 0, 0), (255, 128, 0, 0), (255, 255, 0, 0)]
+    for i, color in enumerate(reversed(countdown_colors), start=1):
+        dmx.update_lighting(color, hue_speed=0)
+        print(f"Countdown: {4 - i}")
+        time.sleep(1)
+
+    bytes_per_sample = 4
+    frame_bytes = audio_block * channels * bytes_per_sample
+    chunk_samples = int(chunk_seconds * sample_rate)
+    hop_samples = max(1, int(chunk_samples * hop_ratio))
+    analysis_buffer = np.empty(0, dtype=np.float32)
+    results = []
+    
+    # --- NEW: Initialize Onset Detector ---
+    onset_detector = RealtimeOnsetDetector(sample_rate=sample_rate)
+    
+    start_time = time.time() # Capture the exact moment the stream begins
+    strobe_toggle = False    # Non-blocking strobe toggle
+    
+    # Initialize the current audio time counter, which is updated on every frame read
+    current_audio_frame_time = 0.0
+
+    print(f"[RUN] Streaming {Path(mp3_path).name} ({genre.title()}) - chunk={chunk_seconds}s, hop={hop_ratio}")
+
+    try:
+        while True:
+            # 1. READ AUDIO FRAME
+            raw = proc.stdout.read(frame_bytes)
+            if not raw or len(raw) < frame_bytes:
+                break
+            
+            # This is the actual audio frame being processed by the onset detector
+            block = np.frombuffer(raw, dtype=np.float32)
+            
+            # --- NEW: Process frame with Onset Detector ---
+            # The onset detector runs on the small, high-frequency audio frame (block)
+            is_onset_time, _ = onset_detector.is_onset(block, current_audio_frame_time)
+            
+            # Update the current audio time position
+            current_audio_frame_time += audio_block / sample_rate
+            
+            # 2. ADD FRAME TO ANALYSIS BUFFER
+            analysis_buffer = np.concatenate((analysis_buffer, block))
+
+            # 3. FEATURE ANALYSIS (runs less frequently, when the buffer has a full chunk)
+            if analysis_buffer.size >= chunk_samples:
+                 
+                # Real-time synchronization (before the long analysis block)
+                time_position = (len(results) * hop_samples) / sample_rate
+                actual_elapsed_time = time.time() - start_time
+                sleep_needed = time_position - actual_elapsed_time
+                if sleep_needed > 0.005:
+                    time.sleep(sleep_needed)
+
+                window = analysis_buffer[:chunk_samples]
+
+                # Feature Extraction (These functions are assumed to be time-consuming)
+                mode, key = detect_mode_key(window, sample_rate)
+                tempo = detect_tempo(window, sample_rate)
+                loudness = detect_loudness(window, sample_rate)
+                feature_output, hue_speed = process_audio_features(
+                    loudness=loudness, mode=mode, key=key, tempo=tempo
+                )
+
+                # --- MODIFIED: Strobe Logic using Onset Detection ---
+                if is_onset_time: # Only strobe when the detector flags a significant onset
+                    # Non-blocking white strobe
+                    strobe_toggle = not strobe_toggle
+                    # Use a very short toggle on a detected onset
+                    rgbw = (255, 255, 255, 0) if strobe_toggle else (0, 0, 0, 0)
+                    dmx.update_lighting(rgbw, hue_speed)
+                else:
+                    mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
+                    r, g, b = mapped_rgb
+                    rgbw = (int(r), int(g), int(b), 0)
+                    dmx.update_lighting(rgbw, hue_speed)
+                # ---------------------------------------------------
+
+                print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Onset:{'⚡' if is_onset_time else ' '}| Feature:{str(feature_output):12s} -> RGB{rgbw[:3]}")
+
+                results.append({
+                    "time_position": time_position,
+                    "features": {"mode": mode, "key": key, "tempo": float(tempo), "loudness": float(loudness)},
+                    "lighting": {"feature_output": str(feature_output), "mapped_rgbw": rgbw, "hue_speed": float(hue_speed), "onset_strobe": is_onset_time}
+                })
+
+                analysis_buffer = analysis_buffer[hop_samples:]
+
+        proc.stdout.close()
+        proc.wait()
+
+        if save_json and results:
+            out_dir = Path(__file__).parent / "outputs"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_file = out_dir / f"lighting_data_{Path(mp3_path).stem}_{genre}_realtime.json"
+            
+            def convert_to_float(obj):
+                if isinstance(obj, np.floating):
+                    return float(obj)
+                return obj
+                
+            with open(out_file, "w") as f:
+                json.dump(results, f, indent=2, default=convert_to_float)
+            print(f"\n[OK] Saved {len(results)} analysis windows to {out_file}")
+
+    except KeyboardInterrupt:
+        print("\n[STOP] Interrupted by user")
+    except Exception as e:
+        print(f"[ERR] Runtime Exception: {e}")
+        proc.kill()
+        traceback.print_exc()
+    finally:
+        pass
+
+
+if __name__ == "__main__":
+    
+    # 1. Get inputs from the new UI function
+    selected_genre, mp3_file_path, dmx_port = get_user_inputs_from_ui()
+    
+    if not all([selected_genre, mp3_file_path, dmx_port]):
+        print("\n[END] Operation cancelled or incomplete data submitted.")
+    else:
+        print("\n--- Configuration Summary ---")
+        print(f"Genre: {selected_genre.title()}")
+        print(f"File: {mp3_file_path}")
+        print(f"DMX Port: {dmx_port}")
+        print(f"Update Rate: {0.25} seconds (Responsive)")
+        print("-----------------------------\n")
+
+        dmx = init_dmx_controller(port=dmx_port, num_channels=9)
+        
+        try:
+            print("Starting the music and lighting show...")
+            stream_mp3_realtime(
+                mp3_path=mp3_file_path,
+                dmx=dmx,
+                genre=selected_genre,
+                chunk_seconds=0.25,
+                hop_ratio=0.5,
+            )
+        finally:
+            dmx.stop_broadcast()
+            dmx.close()
+            print("\n[END] DMX broadcast stopped and port closed.")
