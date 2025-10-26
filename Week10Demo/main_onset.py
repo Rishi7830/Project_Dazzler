@@ -35,7 +35,7 @@ except Exception as e:
     print(f"[WARN] Could not import SimpleDMX: {e}")
     SimpleDMX = None
 
-# UI INTEGRATION AND SETUP FUNCTIONS (NO CHANGES HERE)
+# UI INTEGRATION AND SETUP FUNCTIONS (No Changes)
 
 def get_user_inputs_from_ui():
     """Launches the UI and waits for user input via the Start Dazzling! button."""
@@ -156,7 +156,7 @@ def stream_mp3_realtime(
         dmx.update_lighting(color, hue_speed=0)
         print(f"Countdown: {4 - i}")
         time.sleep(1)
-        
+
     play_audio(mp3_path)
     bytes_per_sample = 4
     frame_bytes = audio_block * channels * bytes_per_sample
@@ -165,41 +165,38 @@ def stream_mp3_realtime(
     analysis_buffer = np.empty(0, dtype=np.float32)
     results = []
     
-    # --- NEW: Initialize Onset Detector ---
+    # --- Initialize Onset Detector ---
     onset_detector = RealtimeOnsetDetector(sample_rate=sample_rate)
     
     start_time = time.time() # Capture the exact moment the stream begins
-    strobe_toggle = False    # Non-blocking strobe toggle
-    
-    # Initialize the current audio time counter, which is updated on every frame read
+    strobe_on_next_update = False # Flag to trigger a strobe on the *next* chunk analysis
     current_audio_frame_time = 0.0
 
     print(f"[RUN] Streaming {Path(mp3_path).name} ({genre.title()}) - chunk={chunk_seconds}s, hop={hop_ratio}")
 
     try:
         while True:
-            # 1. READ AUDIO FRAME
+            # 1. READ AUDIO FRAME (Fast Loop)
             raw = proc.stdout.read(frame_bytes)
             if not raw or len(raw) < frame_bytes:
                 break
             
-            # This is the actual audio frame being processed by the onset detector
             block = np.frombuffer(raw, dtype=np.float32)
             
-            # --- NEW: Process frame with Onset Detector ---
-            # The onset detector runs on the small, high-frequency audio frame (block)
+            # --- Onset detection on the fast frame ---
             is_onset_time, _ = onset_detector.is_onset(block, current_audio_frame_time)
+            if is_onset_time:
+                strobe_on_next_update = True # Set the flag to strobe on the next feature chunk
             
-            # Update the current audio time position
             current_audio_frame_time += audio_block / sample_rate
             
             # 2. ADD FRAME TO ANALYSIS BUFFER
             analysis_buffer = np.concatenate((analysis_buffer, block))
 
-            # 3. FEATURE ANALYSIS (runs less frequently, when the buffer has a full chunk)
-            if analysis_buffer.size >= chunk_samples:
+            # 3. FEATURE ANALYSIS (Slow Loop - Only when enough data is present)
+            while analysis_buffer.size >= chunk_samples:
                  
-                # Real-time synchronization (before the long analysis block)
+                # Real-time synchronization (timing correction)
                 time_position = (len(results) * hop_samples) / sample_rate
                 actual_elapsed_time = time.time() - start_time
                 sleep_needed = time_position - actual_elapsed_time
@@ -208,34 +205,38 @@ def stream_mp3_realtime(
 
                 window = analysis_buffer[:chunk_samples]
 
-                # Feature Extraction (These functions are assumed to be time-consuming)
+                # Feature Extraction
                 mode, key = detect_mode_key(window, sample_rate)
                 tempo = detect_tempo(window, sample_rate)
                 loudness = detect_loudness(window, sample_rate)
+                
+                # IMPORTANT: feature_output and hue_speed are calculated here!
                 feature_output, hue_speed = process_audio_features(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
 
-                # --- MODIFIED: Strobe Logic using Onset Detection ---
-                if is_onset_time: # Only strobe when the detector flags a significant onset
-                    # Non-blocking white strobe
-                    strobe_toggle = not strobe_toggle
-                    # Use a very short toggle on a detected onset
-                    rgbw = (255, 255, 255, 0) if strobe_toggle else (0, 0, 0, 0)
+                # --- LIGHTING LOGIC (MODIFIED) ---
+                if strobe_on_next_update:
+                    # Execute the strobe and immediately reset the flag
+                    rgbw = (255, 255, 255, 0)
                     dmx.update_lighting(rgbw, hue_speed)
+                    strobe_on_next_update = False # Strobe only lasts one chunk update
+                    print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Onset: ⚡ STROBE ⚡ -> RGB{rgbw[:3]}")
                 else:
+                    # Normal color mapping, which includes hue cycling
                     mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
                     r, g, b = mapped_rgb
                     rgbw = (int(r), int(g), int(b), 0)
                     dmx.update_lighting(rgbw, hue_speed)
-                # ---------------------------------------------------
-
-                print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Onset:{'⚡' if is_onset_time else ' '}| Feature:{str(feature_output):12s} -> RGB{rgbw[:3]}")
-
+                    print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Onset:  | Feature:{str(feature_output):12s} -> RGB{rgbw[:3]}")
+                # ---------------------------------
+                
+                # Append results (using the state of strobe_on_next_update for logging)
+                # Note: The 'strobe_on_next_update' flag is already reset here for the next cycle
                 results.append({
                     "time_position": time_position,
                     "features": {"mode": mode, "key": key, "tempo": float(tempo), "loudness": float(loudness)},
-                    "lighting": {"feature_output": str(feature_output), "mapped_rgbw": rgbw, "hue_speed": float(hue_speed), "onset_strobe": is_onset_time}
+                    "lighting": {"feature_output": str(feature_output), "mapped_rgbw": rgbw, "hue_speed": float(hue_speed), "onset_strobe": strobe_on_next_update}
                 })
 
                 analysis_buffer = analysis_buffer[hop_samples:]
