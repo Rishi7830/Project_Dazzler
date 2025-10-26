@@ -26,9 +26,6 @@ from audio_analyzer import process_audio_features
 # Import all necessary functions from color_mapper, including the new mapping function
 from color_mapper import get_available_genres, genre_color_palettes, map_features_to_genre_color
 
-# --- NEW: Import the Onset Detector ---
-from HFC_Realtime import RealtimeOnsetDetector 
-
 try:
     from pyserial import SimpleDMX
 except Exception as e:
@@ -125,7 +122,7 @@ def stream_mp3_realtime(
     genre: str,
     sample_rate: int = 44100,
     channels: int = 1,
-    audio_block: int = 1024, # Frame size for ffmpeg and onset detector
+    audio_block: int = 1024,
     chunk_seconds: float = 0.25,
     hop_ratio: float = 0.5,
     save_json: bool = True,
@@ -133,6 +130,8 @@ def stream_mp3_realtime(
     """
     Stream-decode MP3 in real time, analyze features per window,
     and update DMX lighting, strictly adhering to real-time.
+    
+    The strobe is now triggered by a dynamic loudness increase (energy transient).
     """
     mp3_path = str(mp3_path)
     if not Path(mp3_path).exists():
@@ -165,39 +164,31 @@ def stream_mp3_realtime(
     analysis_buffer = np.empty(0, dtype=np.float32)
     results = []
     
-    # --- Initialize Onset Detector ---
-    onset_detector = RealtimeOnsetDetector(sample_rate=sample_rate)
-    
     start_time = time.time() # Capture the exact moment the stream begins
-    strobe_on_next_update = False # Flag to trigger a strobe on the *next* chunk analysis
-    current_audio_frame_time = 0.0
+    strobe_toggle = False    # Non-blocking strobe toggle (used for alternating strobe if triggered)
+
+    # --- NEW DYNAMIC LOUDNESS VARIABLES ---
+    # Initialize previous_loudness to a very low value (or a typical silent value for float32)
+    previous_loudness = 0.0 
+    # Define the required jump in dB to trigger a strobe (transient detection)
+    LOUDNESS_JUMP_THRESHOLD = 5.0 # Example: must jump 5 dB from previous chunk
+    # --------------------------------------
 
     print(f"[RUN] Streaming {Path(mp3_path).name} ({genre.title()}) - chunk={chunk_seconds}s, hop={hop_ratio}")
+    print(f"[INFO] Dynamic Strobe Threshold: +{LOUDNESS_JUMP_THRESHOLD} dB increase.")
 
     try:
         while True:
-            # 1. READ AUDIO FRAME (Fast Loop)
             raw = proc.stdout.read(frame_bytes)
             if not raw or len(raw) < frame_bytes:
                 break
             
+            time.sleep(0.001) 
             block = np.frombuffer(raw, dtype=np.float32)
-            
-            # --- Onset detection on the fast frame ---
-            # Set the flag if an onset is detected
-            is_onset_time, _ = onset_detector.is_onset(block, current_audio_frame_time)
-            if is_onset_time:
-                strobe_on_next_update = True 
-            
-            current_audio_frame_time += audio_block / sample_rate
-            
-            # 2. ADD FRAME TO ANALYSIS BUFFER
             analysis_buffer = np.concatenate((analysis_buffer, block))
 
-            # 3. FEATURE ANALYSIS (Slow Loop - Only when enough data is present)
             while analysis_buffer.size >= chunk_samples:
-                 
-                # Real-time synchronization (timing correction)
+                
                 time_position = (len(results) * hop_samples) / sample_rate
                 actual_elapsed_time = time.time() - start_time
                 sleep_needed = time_position - actual_elapsed_time
@@ -206,45 +197,37 @@ def stream_mp3_realtime(
 
                 window = analysis_buffer[:chunk_samples]
 
-                # Feature Extraction
                 mode, key = detect_mode_key(window, sample_rate)
                 tempo = detect_tempo(window, sample_rate)
-                loudness = detect_loudness(window, sample_rate)
+                loudness = detect_loudness(window, sample_rate) # Current loudness calculated
                 
-                # *** FIX: ALWAYS CALCULATE DYNAMIC HUE AND COLOR FIRST ***
-                # This ensures `hue_speed` is always up-to-date and dynamic color is ready
                 feature_output, hue_speed = process_audio_features(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
-                mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
-                r, g, b = mapped_rgb
-                # The default color is the dynamic, hue-cycled color
-                rgbw = (int(r), int(g), int(b), 0)
-                
-                # --- LIGHTING LOGIC (Corrected) ---
-                log_strobe = False
-                if strobe_on_next_update:
-                    # Override color to white for this single chunk
-                    rgbw = (255, 255, 255, 0)
-                    strobe_on_next_update = False # Reset the flag immediately
-                    log_strobe = True
-                
-                # *** APPLY LIGHTING: This line runs every chunk. It uses the calculated `hue_speed` 
-                #     to ensure the color cycle continues, regardless of whether `rgbw` is a dynamic 
-                #     color or a momentary strobe (255, 255, 255, 0). ***
-                dmx.update_lighting(rgbw, hue_speed)
-                
-                if log_strobe:
-                    print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Onset: ⚡ STROBE ⚡ -> RGB{rgbw[:3]}")
+
+                # --- MODIFIED STROBE LOGIC (Dynamic Loudness Jump) ---
+                # Check if the current loudness is significantly higher than the previous chunk's loudness
+                if loudness - previous_loudness > LOUDNESS_JUMP_THRESHOLD:
+                    # Non-blocking white strobe: sets to (255, 255, 255, 0)
+                    strobe_toggle = not strobe_toggle
+                    rgbw = (255, 255, 255, 0) if strobe_toggle else (0, 0, 0, 0)
+                    dmx.update_lighting(rgbw, hue_speed)
+                    print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB (+{loudness - previous_loudness:.2f}dB JUMP!) | T:{tempo:3.0f}bpm | Feature:{str(feature_output):12s} -> STROBE")
                 else:
-                    print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Onset:  | Feature:{str(feature_output):12s} -> RGB{rgbw[:3]}")
-                # ---------------------------------
+                    # Normal color mapping
+                    mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
+                    r, g, b = mapped_rgb
+                    rgbw = (int(r), int(g), int(b), 0)
+                    dmx.update_lighting(rgbw, hue_speed)
+                    print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Feature:{str(feature_output):12s} -> RGB{rgbw[:3]}")
                 
-                # Append results
+                # --- Update previous_loudness for the next comparison ---
+                previous_loudness = loudness
+                
                 results.append({
                     "time_position": time_position,
                     "features": {"mode": mode, "key": key, "tempo": float(tempo), "loudness": float(loudness)},
-                    "lighting": {"feature_output": str(feature_output), "mapped_rgbw": rgbw, "hue_speed": float(hue_speed), "onset_strobe": log_strobe}
+                    "lighting": {"feature_output": str(feature_output), "mapped_rgbw": rgbw, "hue_speed": float(hue_speed)}
                 })
 
                 analysis_buffer = analysis_buffer[hop_samples:]
