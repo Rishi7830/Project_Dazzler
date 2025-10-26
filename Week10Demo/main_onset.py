@@ -156,7 +156,7 @@ def stream_mp3_realtime(
         dmx.update_lighting(color, hue_speed=0)
         print(f"Countdown: {4 - i}")
         time.sleep(1)
-
+        
     play_audio(mp3_path)
     bytes_per_sample = 4
     frame_bytes = audio_block * channels * bytes_per_sample
@@ -184,9 +184,10 @@ def stream_mp3_realtime(
             block = np.frombuffer(raw, dtype=np.float32)
             
             # --- Onset detection on the fast frame ---
+            # Set the flag if an onset is detected
             is_onset_time, _ = onset_detector.is_onset(block, current_audio_frame_time)
             if is_onset_time:
-                strobe_on_next_update = True # Set the flag to strobe on the next feature chunk
+                strobe_on_next_update = True 
             
             current_audio_frame_time += audio_block / sample_rate
             
@@ -210,33 +211,40 @@ def stream_mp3_realtime(
                 tempo = detect_tempo(window, sample_rate)
                 loudness = detect_loudness(window, sample_rate)
                 
-                # IMPORTANT: feature_output and hue_speed are calculated here!
+                # *** FIX: ALWAYS CALCULATE DYNAMIC HUE AND COLOR FIRST ***
+                # This ensures `hue_speed` is always up-to-date and dynamic color is ready
                 feature_output, hue_speed = process_audio_features(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
-
-                # --- LIGHTING LOGIC (MODIFIED) ---
+                mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
+                r, g, b = mapped_rgb
+                # The default color is the dynamic, hue-cycled color
+                rgbw = (int(r), int(g), int(b), 0)
+                
+                # --- LIGHTING LOGIC (Corrected) ---
+                log_strobe = False
                 if strobe_on_next_update:
-                    # Execute the strobe and immediately reset the flag
+                    # Override color to white for this single chunk
                     rgbw = (255, 255, 255, 0)
-                    dmx.update_lighting(rgbw, hue_speed)
-                    strobe_on_next_update = False # Strobe only lasts one chunk update
+                    strobe_on_next_update = False # Reset the flag immediately
+                    log_strobe = True
+                
+                # *** APPLY LIGHTING: This line runs every chunk. It uses the calculated `hue_speed` 
+                #     to ensure the color cycle continues, regardless of whether `rgbw` is a dynamic 
+                #     color or a momentary strobe (255, 255, 255, 0). ***
+                dmx.update_lighting(rgbw, hue_speed)
+                
+                if log_strobe:
                     print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Onset: ⚡ STROBE ⚡ -> RGB{rgbw[:3]}")
                 else:
-                    # Normal color mapping, which includes hue cycling
-                    mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
-                    r, g, b = mapped_rgb
-                    rgbw = (int(r), int(g), int(b), 0)
-                    dmx.update_lighting(rgbw, hue_speed)
                     print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Onset:  | Feature:{str(feature_output):12s} -> RGB{rgbw[:3]}")
                 # ---------------------------------
                 
-                # Append results (using the state of strobe_on_next_update for logging)
-                # Note: The 'strobe_on_next_update' flag is already reset here for the next cycle
+                # Append results
                 results.append({
                     "time_position": time_position,
                     "features": {"mode": mode, "key": key, "tempo": float(tempo), "loudness": float(loudness)},
-                    "lighting": {"feature_output": str(feature_output), "mapped_rgbw": rgbw, "hue_speed": float(hue_speed), "onset_strobe": strobe_on_next_update}
+                    "lighting": {"feature_output": str(feature_output), "mapped_rgbw": rgbw, "hue_speed": float(hue_speed), "onset_strobe": log_strobe}
                 })
 
                 analysis_buffer = analysis_buffer[hop_samples:]
