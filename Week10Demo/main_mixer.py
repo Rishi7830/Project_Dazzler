@@ -1,6 +1,7 @@
 """
 Realtime Live Audio (Mixer/USB Input) → Feature Analysis + DMX output.
-Using the custom ALSA alias 'profx_capture' and correctly configured for 1 audio channel.
+Using the custom ALSA alias 'profx_capture' (from ~/.asoundrc) and configured for 1 audio channel.
+The DMX logic has been temporarily adjusted to react to the low 0.0-0.5 dB loudness values observed.
 """
 
 import os
@@ -20,7 +21,7 @@ from audio_analyzer import process_audio_features
 from color_mapper import map_features_to_genre_color
 
 try:
-    from pyserial import SimpleDMX
+    from pyserial_new import SimpleDMX
 except Exception as e:
     print(f"[WARN] Could not import SimpleDMX: {e}")
     SimpleDMX = None
@@ -156,7 +157,7 @@ def stream_audio_realtime(
 
                 window = analysis_buffer[:chunk_samples]
                 
-                # Mix to mono for analysis: Since channels=1, this is now a simple reshape/pass-through
+                # Mix to mono for analysis: Since channels=1, this is now a simple pass-through
                 if channels > 1:
                     window_mono = window.reshape(-1, channels).mean(axis=1)
                 else:
@@ -170,16 +171,26 @@ def stream_audio_realtime(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
 
-                # DMX Output Logic
-                if loudness > 80:
+                # DMX Output Logic - ADJUSTED FOR LOW SENSITIVITY
+                # --- START SENSITIVITY ADJUSTMENT ---
+                # Based on observation, loudness is 0.0-0.5. Adjusting the strobe threshold down.
+                # If you turn up the mixer volume and see L values > 50, change this back to 80.0
+                LOUDNESS_THRESHOLD = 0.5 
+                
+                if loudness >= LOUDNESS_THRESHOLD:
                     strobe_toggle = not strobe_toggle
+                    # Strobe light for high perceived loudness
                     rgbw = (0, 0, 0, 255) if strobe_toggle else (0, 0, 0, 0)
                     dmx.update_lighting(rgbw, hue_speed)
                 else:
+                    # Map colors based on other features (key/mode/genre) for ambient/low sound
                     mapped_rgb = map_features_to_genre_color(loudness=loudness, tempo=tempo, genre=genre)
                     r, g, b = mapped_rgb
-                    rgbw = (int(r), int(g), int(b), 0) 
+                    # Add a dim white when loudness is very low (e.g., < 0.1)
+                    w_level = 50 if loudness < 0.1 else 0 
+                    rgbw = (int(r), int(g), int(b), w_level) 
                     dmx.update_lighting(rgbw, hue_speed)
+                # --- END SENSITIVITY ADJUSTMENT ---
 
                 print(f"[{time_position:6.2f}s] L:{loudness:5.2f}dB | T:{tempo:3.0f}bpm | Feature:{str(feature_output):12s} -> RGBW{rgbw}")
 
@@ -243,7 +254,7 @@ if __name__ == "__main__":
             genre=selected_genre,
             chunk_seconds=0.25,
             hop_ratio=0.5,
-            channels=1, # *** FINAL FIX: Set to 1 audio channel ***
+            channels=1,
         )
     finally:
         dmx.stop_broadcast()
