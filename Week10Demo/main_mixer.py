@@ -1,6 +1,6 @@
 """
 Realtime Live Audio (Mixer/USB Input) → Feature Analysis + DMX output.
-Hardcoded configuration for Linux/ALSA environment using hw:0,0.
+Using plughw for more resilient ALSA device access.
 """
 
 import os
@@ -28,16 +28,16 @@ except Exception as e:
     SimpleDMX = None
 
 # --- CONFIGURATION (HARDCODED) ---
-# NOTE: The only values you should need to change now are SELECTED_GENRE or DMX_PORT if they change.
 
 # The DMX port connected to your DMX controller (e.g., /dev/ttyUSB0 on Linux)
 DMX_PORT = "/dev/ttyUSB0" 
 
-# The ALSA device ID for your USB mixer (Mackie ProFx, Card 0, Device 0)
-MIXER_DEVICE_ID = "hw:0,0" 
+# The ALSA device ID for your USB mixer (Mackie ProFx). Using the plughw alias.
+# CHANGE THIS LINE: hw:0,0 -> plughw:CARD=ProFx,DEV=0
+MIXER_DEVICE_ID = "plughw:CARD=ProFx,DEV=0" 
 
 # The musical genre for color mapping
-SELECTED_GENRE = "indie" # Must be one of your genre_color_palettes keys
+SELECTED_GENRE = "indie" 
 # --- END CONFIGURATION ---
 
 # --- DMX Initialization Functions (Kept for completeness) ---
@@ -171,7 +171,6 @@ def stream_audio_realtime(
                 # DMX Output Logic
                 if loudness > 80:
                     strobe_toggle = not strobe_toggle
-                    # Note: Using (0, 0, 0, 255) for pure white strobe
                     rgbw = (0, 0, 0, 255) if strobe_toggle else (0, 0, 0, 0)
                     dmx.update_lighting(rgbw, hue_speed)
                 else:
