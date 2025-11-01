@@ -1,6 +1,7 @@
 """
 Realtime Live Audio (Mixer/USB Input) → Feature Analysis + DMX output.
-Using the ALSA 'plughw:0' alias (Card 0 index) to bypass complex configuration issues.
+Using the custom ALSA alias 'profx_capture' defined in ~/.asoundrc 
+to ensure the Mackie ProFx (Card 0) is correctly addressed.
 """
 
 import os
@@ -12,13 +13,11 @@ import numpy as np
 import traceback
 from pathlib import Path
 
-# Import your custom feature modules
+# Import your custom feature modules (Assuming these files are present)
 from tempo_detection import detect_tempo
 from loudness_detection import detect_loudness
 from mode_key_detection import detect_mode_key
 from audio_analyzer import process_audio_features
-
-# Import all necessary functions from color_mapper
 from color_mapper import map_features_to_genre_color
 
 try:
@@ -32,9 +31,9 @@ except Exception as e:
 # The DMX port connected to your DMX controller (e.g., /dev/ttyUSB0 on Linux)
 DMX_PORT = "/dev/ttyUSB0" 
 
-# The ALSA device ID for your USB mixer (Mackie ProFx, Card 0). 
-# Using the index-based plughw alias: plughw:0
-MIXER_DEVICE_ID = "plughw:0" 
+# The ALSA device ID for your USB mixer. 
+# *** We are using the custom alias defined in ~/.asoundrc ***
+MIXER_DEVICE_ID = "profx_capture" 
 
 # The musical genre for color mapping
 SELECTED_GENRE = "indie" 
