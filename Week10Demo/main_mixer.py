@@ -1,6 +1,6 @@
 """
 Realtime Live Audio (Mixer/USB Input) → Feature Analysis + DMX output.
-Using plughw for more resilient ALSA device access.
+Using plughw:0,0, the most reliable ALSA index-based alias.
 """
 
 import os
@@ -17,9 +17,7 @@ from tempo_detection import detect_tempo
 from loudness_detection import detect_loudness
 from mode_key_detection import detect_mode_key
 from audio_analyzer import process_audio_features
-
-# Import all necessary functions from color_mapper
-from color_mapper import map_features_to_genre_color
+from color_mapper import map_features_to_genre_color # Import all necessary functions from color_mapper
 
 try:
     from pyserial_new import SimpleDMX
@@ -32,9 +30,9 @@ except Exception as e:
 # The DMX port connected to your DMX controller (e.g., /dev/ttyUSB0 on Linux)
 DMX_PORT = "/dev/ttyUSB0" 
 
-# The ALSA device ID for your USB mixer (Mackie ProFx). Using the plughw alias.
-# CHANGE THIS LINE: hw:0,0 -> plughw:CARD=ProFx,DEV=0
-MIXER_DEVICE_ID = "plughw:CARD=ProFx,DEV=0" 
+# The ALSA device ID for your USB mixer (Mackie ProFx, Card 0). 
+# Using the index-based plughw alias: plughw:0,0
+MIXER_DEVICE_ID = "plughw:0,0" 
 
 # The musical genre for color mapping
 SELECTED_GENRE = "indie" 
@@ -220,7 +218,6 @@ def stream_audio_realtime(
 
 if __name__ == "__main__":
     
-    # Use the hardcoded values
     selected_genre = SELECTED_GENRE
     mixer_device_id = MIXER_DEVICE_ID
     dmx_port = DMX_PORT
