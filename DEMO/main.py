@@ -127,6 +127,7 @@ def stream_mp3_realtime(
     hop_ratio: float = 0.5,
     save_json: bool = True,
 ):
+    HUE_SPEED_SCALE_FACTOR = 0.5
     """
     Stream-decode MP3 in real time, analyze features per window,
     and update DMX lighting, strictly adhering to real-time.
@@ -193,7 +194,7 @@ def stream_mp3_realtime(
                 feature_output, hue_speed = process_audio_features(
                     loudness=loudness, mode=mode, key=key, tempo=tempo
                 )
-
+                hue_speed *= HUE_SPEED_SCALE_FACTOR
                 if loudness > 80:
                     # Non-blocking white strobe
                     strobe_toggle = not strobe_toggle
