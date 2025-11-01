@@ -1,6 +1,6 @@
 """
 Realtime Live Audio (Mixer/USB Input) → Feature Analysis + DMX output.
-Hardcoded configuration for Linux/ALSA environment.
+Hardcoded configuration for Linux/ALSA environment using hw:0,0.
 """
 
 import os
@@ -11,8 +11,6 @@ import json
 import numpy as np
 import traceback
 from pathlib import Path
-# import tkinter as tk # REMOVED: UI Dashboard
-# from audio_playback import play_audio # REMOVED: File Playback
 
 # Import your custom feature modules
 from tempo_detection import detect_tempo
@@ -30,18 +28,19 @@ except Exception as e:
     SimpleDMX = None
 
 # --- CONFIGURATION (HARDCODED) ---
-# ⚠️ UPDATE THESE VALUES BASED ON YOUR SYSTEM ⚠️
+# NOTE: The only values you should need to change now are SELECTED_GENRE or DMX_PORT if they change.
+
 # The DMX port connected to your DMX controller (e.g., /dev/ttyUSB0 on Linux)
 DMX_PORT = "/dev/ttyUSB0" 
 
-# The ALSA device ID for your USB mixer (e.g., hw:0, default, or plughw:CARD=...)
-# You MUST replace 'plughw:CARD=MixerName,DEV=0' with your actual device ID.
-# Run 'arecord -L' or 'cat /proc/asound/cards' to find your device.
-MIXER_DEVICE_ID = "plughw:CARD=USBDevice,DEV=0" 
+# The ALSA device ID for your USB mixer (Mackie ProFx, Card 0, Device 0)
+MIXER_DEVICE_ID = "hw:0,0" 
 
 # The musical genre for color mapping
 SELECTED_GENRE = "indie" # Must be one of your genre_color_palettes keys
 # --- END CONFIGURATION ---
+
+# --- DMX Initialization Functions (Kept for completeness) ---
 
 def _suggest_default_port() -> str:
     """Suggests a default DMX port based on the operating system."""
@@ -51,11 +50,6 @@ def _suggest_default_port() -> str:
     if sysname == "darwin":
         return os.environ.get("DAZZLER_DMX_PORT", "/dev/tty.usbserial")
     return os.environ.get("DAZZLER_DMX_PORT", "/dev/ttyUSB1")
-
-def _suggest_default_mixer_device() -> str:
-    """Suggests a default mixer device string based on the operating system."""
-    # Since you are on Linux, we stick to an ALSA-style default.
-    return os.environ.get("DAZZLER_MIXER_DEVICE", "hw:0")
 
 
 class _NoopDMX:
@@ -79,7 +73,7 @@ def init_dmx_controller(port: str | None = None, num_channels: int = 18):
         return _NoopDMX()
 
 
-# REAL-TIME STREAMING AND ANALYSIS (LIVE INPUT)
+# --- REAL-TIME STREAMING AND ANALYSIS (LIVE INPUT) ---
 
 def stream_audio_realtime(
     device_id: str,
@@ -96,11 +90,7 @@ def stream_audio_realtime(
     Stream-capture live audio from a USB mixer device, analyze features per window.
     """
     
-    # --- FFmpeg Command for Live Capture (Linux/ALSA) ---
-    sysname = platform.system().lower()
-    if not sysname.startswith("linux"):
-        print(f"[ERR] This configuration is optimized for Linux (ALSA). Detected OS: {sysname}")
-
+    # FFmpeg Command for Live Capture (Linux/ALSA)
     input_format = "alsa" 
     input_device = device_id
         
@@ -181,6 +171,7 @@ def stream_audio_realtime(
                 # DMX Output Logic
                 if loudness > 80:
                     strobe_toggle = not strobe_toggle
+                    # Note: Using (0, 0, 0, 255) for pure white strobe
                     rgbw = (0, 0, 0, 255) if strobe_toggle else (0, 0, 0, 0)
                     dmx.update_lighting(rgbw, hue_speed)
                 else:
@@ -212,6 +203,7 @@ def stream_audio_realtime(
             proc.terminate()
             proc.wait(timeout=1)
         
+        # Save analysis data
         if save_json and results:
             out_dir = Path(__file__).parent / "outputs"
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -236,7 +228,7 @@ if __name__ == "__main__":
     
     print("\n--- Configuration Summary ---")
     print(f"Genre: {selected_genre.title()}")
-    print(f"Audio Device: {mixer_device_id} (CHECK THIS!)")
+    print(f"Audio Device: **{mixer_device_id}**")
     print(f"DMX Port: {dmx_port}")
     print(f"Update Rate: {0.25} seconds (Responsive)")
     print("-----------------------------\n")
@@ -251,7 +243,7 @@ if __name__ == "__main__":
             genre=selected_genre,
             chunk_seconds=0.25,
             hop_ratio=0.5,
-            channels=2,
+            channels=2, # Assuming stereo mixer input
         )
     finally:
         dmx.stop_broadcast()
