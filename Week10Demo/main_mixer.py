@@ -1,7 +1,6 @@
 """
 Realtime Live Audio (Mixer/USB Input) → Feature Analysis + DMX output.
-Using the custom ALSA alias 'profx_capture' defined in ~/.asoundrc 
-to ensure the Mackie ProFx (Card 0) is correctly addressed.
+Using the custom ALSA alias 'profx_capture' and fixing the channel count to 1.
 """
 
 import os
@@ -32,7 +31,7 @@ except Exception as e:
 DMX_PORT = "/dev/ttyUSB0" 
 
 # The ALSA device ID for your USB mixer. 
-# *** We are using the custom alias defined in ~/.asoundrc ***
+# *** Custom alias defined in ~/.asoundrc is the reliable choice ***
 MIXER_DEVICE_ID = "profx_capture" 
 
 # The musical genre for color mapping
@@ -79,7 +78,7 @@ def stream_audio_realtime(
     dmx,
     genre: str,
     sample_rate: int = 44100,
-    channels: int = 2,
+    channels: int = 1, # Set to 1 channel in the function definition
     audio_block: int = 1024,
     chunk_seconds: float = 0.25,
     hop_ratio: float = 0.5,
@@ -93,6 +92,7 @@ def stream_audio_realtime(
     input_format = "alsa" 
     input_device = device_id
         
+    # NOTE: The -ac parameter is now also 1 here.
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", 
         # Input source parameters
@@ -156,8 +156,11 @@ def stream_audio_realtime(
 
                 window = analysis_buffer[:chunk_samples]
                 
-                # Mix to mono for analysis (assuming stereo input)
-                window_mono = window.reshape(-1, channels).mean(axis=1) 
+                # Mix to mono for analysis: Since channels=1, this is now a simple reshape/pass-through
+                if channels > 1:
+                    window_mono = window.reshape(-1, channels).mean(axis=1)
+                else:
+                    window_mono = window 
                 
                 # Feature Analysis
                 mode, key = detect_mode_key(window_mono, sample_rate)
@@ -240,7 +243,7 @@ if __name__ == "__main__":
             genre=selected_genre,
             chunk_seconds=0.25,
             hop_ratio=0.5,
-            channels=2, # Assuming stereo mixer input
+            channels=1, # *** THIS IS THE FINAL FIX ***
         )
     finally:
         dmx.stop_broadcast()
