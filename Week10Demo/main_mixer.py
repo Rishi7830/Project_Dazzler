@@ -1,6 +1,6 @@
 """
 Realtime Live Audio (Mixer/USB Input) → Feature Analysis + DMX output.
-Using the custom ALSA alias 'profx_capture' and fixing the channel count to 1.
+Using the custom ALSA alias 'profx_capture' and correctly configured for 1 audio channel.
 """
 
 import os
@@ -20,7 +20,7 @@ from audio_analyzer import process_audio_features
 from color_mapper import map_features_to_genre_color
 
 try:
-    from pyserial_new import SimpleDMX
+    from pyserial import SimpleDMX
 except Exception as e:
     print(f"[WARN] Could not import SimpleDMX: {e}")
     SimpleDMX = None
@@ -92,7 +92,7 @@ def stream_audio_realtime(
     input_format = "alsa" 
     input_device = device_id
         
-    # NOTE: The -ac parameter is now also 1 here.
+    # FFMPEG command requests 1 channel (-ac 1)
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", 
         # Input source parameters
@@ -243,7 +243,7 @@ if __name__ == "__main__":
             genre=selected_genre,
             chunk_seconds=0.25,
             hop_ratio=0.5,
-            channels=1, # *** THIS IS THE FINAL FIX ***
+            channels=1, # *** FINAL FIX: Set to 1 audio channel ***
         )
     finally:
         dmx.stop_broadcast()
