@@ -1,6 +1,6 @@
 """
 Realtime Live Audio (Mixer/USB Input) → Feature Analysis + DMX output.
-Using the ALSA 'default' alias as the most stable target in the WSL/USB environment.
+Using the ALSA 'plughw:0' alias (Card 0 index) to bypass complex configuration issues.
 """
 
 import os
@@ -32,9 +32,9 @@ except Exception as e:
 # The DMX port connected to your DMX controller (e.g., /dev/ttyUSB0 on Linux)
 DMX_PORT = "/dev/ttyUSB0" 
 
-# The ALSA device ID for your USB mixer. 
-# Using the 'default' alias, which should resolve to Card 0 now that the mixer is attached.
-MIXER_DEVICE_ID = "default" 
+# The ALSA device ID for your USB mixer (Mackie ProFx, Card 0). 
+# Using the index-based plughw alias: plughw:0
+MIXER_DEVICE_ID = "plughw:0" 
 
 # The musical genre for color mapping
 SELECTED_GENRE = "indie" 
