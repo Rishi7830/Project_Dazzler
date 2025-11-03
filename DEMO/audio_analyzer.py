@@ -156,7 +156,7 @@ def tempo_to_hue_speed(tempo: float) -> float:
     # Map to cycling speed: 0.1 (slow) to 2.0 (fast)
     
     # Normalize tempo to 0-1 range
-    tempo_normalized = np.clip((tempo - 60) / 120, 0, 1)
+    tempo_normalized = np.clip((tempo - 60) / 140, 0, 1)
     
     # Speed range: 0.1 to 2.0
     hue_speed = 0.1 + (tempo_normalized * 1.9)
